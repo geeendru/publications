@@ -1,0 +1,6269 @@
+---
+title: "ANAFILAX"
+author: "Laura Gendra Maneiro"
+date: "2026-05-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(readxl)
+library(dplyr)
+library(janitor)
+library(stringr)
+library(tidyr)
+
+
+ruta <- "anafilaxia.xlsx"
+
+df_raw <- read_excel(
+  path = ruta,
+  sheet = "Hoja1",
+  .name_repair = "minimal"
+)
+
+
+df <- df_raw %>%
+  remove_empty(which = c("rows", "cols"))
+
+names(df)[2] <- "Sexo_inicial"
+names(df)[5] <- "Video"
+
+
+df <- df %>%
+  clean_names()
+
+glimpse(df)
+
+names(df)
+
+vars_spray <- c(
+  "sp_prueba",
+  "sp_coge_ok",
+  "sp_punta",
+  "sp_dedos",
+  "sp_pulgar",
+  "sp_efectivo",
+  "sp_112"
+)
+
+vars_autoinyector <- c(
+  "au_efectivo",
+  "au_tapa",
+  "au_puno",
+  "au_encara",
+  "au_press",
+  "au_muslo",
+  "au_10seg",
+  "au_masaje",
+  "au_112"
+)
+
+vars_tecnicas <- c(vars_spray, vars_autoinyector)
+
+setdiff(vars_tecnicas, names(df))
+
+diccionario_variables <- tibble(
+  variable = c(
+    vars_spray,
+    vars_autoinyector
+  ),
+  dispositivo = c(
+    rep("Spray", length(vars_spray)),
+    rep("Autoinyector", length(vars_autoinyector))
+  ),
+  etiqueta = c(
+    "No lo prueba antes",
+    "Agarre correcto",
+    "Direcciona correctamente",
+    "Buena profundidad",
+    "Presiona émbolo",
+    "Administra adrenalina",
+    "Llama al 112",
+    
+    "Administra adrenalina",
+    "Retira tapa",
+    "Agarre correcto",
+    "Direcciona correctamente",
+    "Presiona suficiente",
+    "Administra en muslo",
+    "Inyecta 10 segundos",
+    "Masajea la zona",
+    "Llama al 112"
+  ),
+  valor_1 = "Correcto",
+  valor_0 = "Incorrecto"
+)
+
+diccionario_variables
+
+df <- df %>%
+  mutate(
+    across(
+      all_of(vars_tecnicas),
+      ~ suppressWarnings(as.numeric(.x))
+    )
+  )
+
+
+comprobacion_valores <- df %>%
+  select(all_of(vars_tecnicas)) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "valor"
+  ) %>%
+  count(variable, valor) %>%
+  arrange(variable, valor)
+
+comprobacion_valores
+
+tabla_pasos_larga <- df %>%
+  select(all_of(vars_tecnicas)) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "valor"
+  ) %>%
+  left_join(diccionario_variables, by = "variable") %>%
+  mutate(
+    resultado = case_when(
+      valor == 1 ~ "Correcto",
+      valor == 0 ~ "Incorrecto",
+      is.na(valor) ~ "Perdido",
+      TRUE ~ "Otro valor"
+    )
+  )
+
+tabla_pasos_larga
+
+
+tabla_pasos <- tabla_pasos_larga %>%
+  count(dispositivo, variable, etiqueta, resultado) %>%
+  group_by(dispositivo, variable, etiqueta) %>%
+  mutate(
+    porcentaje = 100 * n / sum(n)
+  ) %>%
+  ungroup() %>%
+  arrange(dispositivo, variable, resultado)
+
+tabla_pasos
+
+
+tabla_correctos <- tabla_pasos %>%
+  filter(resultado == "Correcto") %>%
+  select(
+    dispositivo,
+    variable,
+    etiqueta,
+    n_correctos = n,
+    porcentaje_correctos = porcentaje
+  ) %>%
+  arrange(dispositivo, variable)
+
+tabla_correctos
+
+
+
+df <- df %>%
+  mutate(
+    spray_score = rowSums(
+      across(all_of(vars_spray)),
+      na.rm = TRUE
+    ),
+    autoinyector_score = rowSums(
+      across(all_of(vars_autoinyector)),
+      na.rm = TRUE
+    ),
+    spray_score_pct = 100 * spray_score / length(vars_spray),
+    autoinyector_score_pct = 100 * autoinyector_score / length(vars_autoinyector)
+  )
+
+
+resumen_scores <- df %>%
+  summarise(
+    n = n(),
+    
+    spray_media = mean(spray_score, na.rm = TRUE),
+    spray_sd = sd(spray_score, na.rm = TRUE),
+    spray_mediana = median(spray_score, na.rm = TRUE),
+    spray_min = min(spray_score, na.rm = TRUE),
+    spray_max = max(spray_score, na.rm = TRUE),
+    
+    autoinyector_media = mean(autoinyector_score, na.rm = TRUE),
+    autoinyector_sd = sd(autoinyector_score, na.rm = TRUE),
+    autoinyector_mediana = median(autoinyector_score, na.rm = TRUE),
+    autoinyector_min = min(autoinyector_score, na.rm = TRUE),
+    autoinyector_max = max(autoinyector_score, na.rm = TRUE),
+    
+    spray_pct_media = mean(spray_score_pct, na.rm = TRUE),
+    spray_pct_sd = sd(spray_score_pct, na.rm = TRUE),
+    spray_pct_mediana = median(spray_score_pct, na.rm = TRUE),
+    
+    autoinyector_pct_media = mean(autoinyector_score_pct, na.rm = TRUE),
+    autoinyector_pct_sd = sd(autoinyector_score_pct, na.rm = TRUE),
+    autoinyector_pct_mediana = median(autoinyector_score_pct, na.rm = TRUE)
+  )
+
+resumen_scores
+
+
+
+df_tecnica <- df %>%
+  select(
+    id,
+    centro,
+    condicion,
+    video,
+    aleatorizacion_simulacion,
+    
+    all_of(vars_spray),
+    all_of(vars_autoinyector),
+    
+    spray_score,
+    autoinyector_score,
+    spray_score_pct,
+    autoinyector_score_pct
+  )
+
+df_tecnica
+
+
+df_tecnica_legible <- df_tecnica %>%
+  rename(
+    spray_no_lo_prueba_antes = sp_prueba,
+    spray_agarre_correcto = sp_coge_ok,
+    spray_direcciona_correctamente = sp_punta,
+    spray_buena_profundidad = sp_dedos,
+    spray_presiona_embolo = sp_pulgar,
+    spray_administra_adrenalina = sp_efectivo,
+    spray_llama_112 = sp_112,
+    
+    autoinyector_administra_adrenalina = au_efectivo,
+    autoinyector_retira_tapa = au_tapa,
+    autoinyector_agarre_correcto = au_puno,
+    autoinyector_direcciona_correctamente = au_encara,
+    autoinyector_presiona_suficiente = au_press,
+    autoinyector_administra_en_muslo = au_muslo,
+    autoinyector_inyecta_10seg = au_10seg,
+    autoinyector_masajea_zona = au_masaje,
+    autoinyector_llama_112 = au_112
+  )
+
+df_tecnica_legible
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(gt)
+library(stringr)
+library(purrr)
+
+
+vars_spray <- c(
+  "sp_coge_ok",
+  "sp_prueba",
+  "sp_punta",
+  "sp_dedos",
+  "sp_pulgar",
+  "sp_efectivo",
+  "sp_112"
+)
+
+vars_autoinyector <- c(
+
+  "au_tapa",
+  "au_puno",
+  "au_encara",
+  "au_press",
+  "au_muslo",
+  "au_10seg",
+  "au_masaje",
+  "au_efectivo",
+  "au_112"
+)
+
+vars_tecnicas <- c(vars_spray, vars_autoinyector)
+
+
+diccionario_variables <- tibble(
+  variable = c(
+    vars_spray,
+    vars_autoinyector
+  ),
+  dispositivo = c(
+    rep("Spray nasal", length(vars_spray)),
+    rep("Autoinyector", length(vars_autoinyector))
+  ),
+  etiqueta = c(
+    
+    "Agarre correcto",
+    "No lo prueba antes",
+    "Direcciona correctamente",
+    "Buena profundidad",
+    "Presiona émbolo",
+    "Administra adrenalina",
+    "Llama al 112",
+    
+    
+    "Retira tapa",
+    "Agarre correcto",
+    "Direcciona correctamente",
+    "Presiona suficiente",
+    "Administra en muslo",
+    "Inyecta 10 segundos",
+    "Masajea la zona",
+    "Administra adrenalina",
+    "Llama al 112"
+  )
+)
+
+
+df_tabla <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto"))
+  )
+
+
+table(df_tabla$video_grupo, useNA = "ifany")
+
+
+formato_n_pct <- function(x) {
+  n_correcto <- sum(x == 1, na.rm = TRUE)
+  n_total <- sum(!is.na(x))
+  pct <- 100 * n_correcto / n_total
+  
+  paste0(
+    n_correcto,
+    "/",
+    n_total,
+    " (",
+    sprintf("%.1f", pct),
+    "%)"
+  )
+}
+
+
+calcular_p_fisher <- function(data, variable) {
+  
+  tabla <- table(
+    data[[variable]],
+    data$video_grupo,
+    useNA = "no"
+  )
+  
+  
+  if (nrow(tabla) < 2 || ncol(tabla) < 2) {
+    return(NA_real_)
+  }
+  
+  p <- fisher.test(tabla)$p.value
+  
+  return(p)
+}
+
+
+formato_p <- function(p) {
+  case_when(
+    is.na(p) ~ "",
+    p < 0.001 ~ "<0.001",
+    TRUE ~ sprintf("%.3f", p)
+  )
+}
+
+
+tabla_resultados <- diccionario_variables %>%
+  rowwise() %>%
+  mutate(
+    conjunto = formato_n_pct(df_tabla[[variable]]),
+    
+    reel = formato_n_pct(
+      df_tabla %>%
+        filter(video_grupo == "Reel") %>%
+        pull(variable)
+    ),
+    
+    corto_amor = formato_n_pct(
+      df_tabla %>%
+        filter(video_grupo == "Corto") %>%
+        pull(variable)
+    ),
+    
+    p_valor_num = calcular_p_fisher(df_tabla, variable),
+    p_valor = formato_p(p_valor_num)
+  ) %>%
+  ungroup() %>%
+  select(
+    dispositivo,
+    variable,
+    etiqueta,
+    conjunto,
+    reel,
+    corto_amor,
+    p_valor
+  )
+
+
+
+tabla_gt <- tabla_resultados %>%
+  gt(
+    groupname_col = "dispositivo"
+  ) %>%
+  cols_label(
+    etiqueta = "Variable",
+    conjunto = "Total",
+    reel = "Reel",
+    corto_amor = "Corto",
+    p_valor = "p"
+  ) %>%
+  cols_hide(
+    columns = variable
+  ) %>%
+  tab_header(
+    title = md("**Rendimiento técnico según dispositivo y tipo de vídeo**"),
+    subtitle = md("Resultados expresados como n/N (%) de ejecución correcta")
+  ) %>%
+  tab_spanner(
+    label = "Grupo de enseñanza",
+    columns = c(reel, corto_amor)
+  ) %>%
+  tab_source_note(
+    source_note = md(
+      "Los valores representan participantes que realizaron correctamente cada paso.  
+      El p-valor compara Reel frente a Corto mediante test exacto de Fisher."
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#F2F2F2"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 12,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    row_group.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    column_labels.border.top.width = px(1),
+    column_labels.border.bottom.width = px(1),
+    data_row.padding = px(5),
+    source_notes.font.size = 10
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = etiqueta
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(conjunto, reel, corto_amor, p_valor)
+  )
+
+
+gtsave(
+  data = tabla_gt,
+  filename = "tabla_rendimiento_tecnico_video.png",
+  expand = 10
+)
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(forcats)
+
+vars_spray <- c(
+  "sp_coge_ok",
+  "sp_prueba",
+  "sp_punta",
+  "sp_dedos",
+  "sp_pulgar",
+  "sp_efectivo",
+  "sp_112"
+)
+
+vars_autoinyector <- c(
+  "au_tapa",
+  "au_puno",
+  "au_encara",
+  "au_press",
+  "au_muslo",
+  "au_10seg",
+  "au_masaje",
+  "au_efectivo",
+  "au_112"
+)
+
+vars_tecnicas <- c(vars_spray, vars_autoinyector)
+
+
+diccionario_variables <- tibble(
+  variable = c(vars_spray, vars_autoinyector),
+  dispositivo = c(
+    rep("Spray nasal", length(vars_spray)),
+    rep("Autoinyector", length(vars_autoinyector))
+  ),
+  etiqueta = c(
+    "Agarre correcto",
+    "No lo prueba antes",
+    "Direcciona correctamente",
+    "Buena profundidad",
+    "Presiona émbolo",
+    "Administra adrenalina",
+    "Llama al 112",
+    
+    "Retira tapa",
+    "Agarre correcto",
+    "Direcciona correctamente",
+    "Presiona suficiente",
+    "Administra en muslo",
+    "Inyecta 10 segundos",
+    "Masajea la zona",
+    "Administra adrenalina",
+    "Llama al 112"
+  )
+) %>%
+  group_by(dispositivo) %>%
+  mutate(
+    orden = row_number()
+  ) %>%
+  ungroup()
+
+
+df_grafico <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto"))
+  ) %>%
+  select(video_grupo, all_of(vars_tecnicas)) %>%
+  pivot_longer(
+    cols = all_of(vars_tecnicas),
+    names_to = "variable",
+    values_to = "valor"
+  ) %>%
+  left_join(diccionario_variables, by = "variable") %>%
+  mutate(
+    valor = as.numeric(valor),
+    dispositivo = factor(dispositivo, levels = c("Spray nasal", "Autoinyector"))
+  )
+
+
+grafico_resumen <- df_grafico %>%
+  group_by(dispositivo, variable, etiqueta, orden, video_grupo) %>%
+  summarise(
+    n = sum(!is.na(valor)),
+    correctos = sum(valor == 1, na.rm = TRUE),
+    porcentaje = 100 * correctos / n,
+    .groups = "drop"
+  )
+
+
+grafico_resumen <- grafico_resumen %>%
+  mutate(
+    etiqueta_unica = paste(dispositivo, etiqueta, sep = " - ")
+  )
+
+orden_etiquetas <- grafico_resumen %>%
+  distinct(dispositivo, orden, etiqueta_unica) %>%
+  arrange(dispositivo, desc(orden)) %>%
+  pull(etiqueta_unica)
+
+grafico_resumen <- grafico_resumen %>%
+  mutate(
+    etiqueta_unica = factor(etiqueta_unica, levels = orden_etiquetas)
+  )
+
+
+grafico_pasos <- ggplot(
+  grafico_resumen,
+  aes(
+    x = porcentaje,
+    y = etiqueta_unica,
+    color = video_grupo
+  )
+) +
+  geom_line(
+    aes(group = etiqueta_unica),
+    color = "grey80",
+    linewidth = 0.6
+  ) +
+  geom_point(size = 3) +
+  facet_grid(
+    dispositivo ~ .,
+    scales = "free_y",
+    space = "free_y"
+  ) +
+  scale_y_discrete(
+    labels = function(x) str_remove(x, "^.* - ")
+  ) +
+  scale_x_continuous(
+    limits = c(0, 100),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Ejecución correcta de los pasos técnicos según tipo de vídeo",
+    subtitle = "Comparación entre Reel y Corto",
+    x = "Participantes con ejecución correcta (%)",
+    y = NULL,
+    color = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    strip.text.y = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+
+ggsave(
+  filename = "grafico_pasos_tecnicos_reel_vs_corto.png",
+  plot = grafico_pasos,
+  width = 9,
+  height = 7,
+  dpi = 300
+)
+
+```
+
+```{r}
+
+library(ggplot2)
+library(stringr)
+library(scales)
+
+
+grafico_resumen_barras <- grafico_resumen %>%
+  mutate(
+    etiqueta_unica = paste(dispositivo, etiqueta, sep = " - ")
+  )
+
+orden_etiquetas <- grafico_resumen_barras %>%
+  distinct(dispositivo, orden, etiqueta_unica) %>%
+  arrange(dispositivo, desc(orden)) %>%
+  pull(etiqueta_unica)
+
+grafico_resumen_barras <- grafico_resumen_barras %>%
+  mutate(
+    etiqueta_unica = factor(etiqueta_unica, levels = orden_etiquetas),
+    porcentaje_label = paste0(sprintf("%.1f", porcentaje), "%")
+  )
+
+grafico_barras <- ggplot(
+  grafico_resumen_barras,
+  aes(
+    x = porcentaje,
+    y = etiqueta_unica,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = porcentaje_label),
+    position = position_dodge(width = 0.8),
+    hjust = -0.10,
+    size = 3.2
+  ) +
+  facet_grid(
+    dispositivo ~ .,
+    scales = "free_y",
+    space = "free_y"
+  ) +
+  scale_y_discrete(
+    labels = function(x) str_remove(x, "^.* - ")
+  ) +
+  scale_x_continuous(
+    limits = c(0, 110),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Ejecución correcta de los pasos técnicos según tipo de vídeo",
+    subtitle = "Porcentaje de participantes con ejecución correcta",
+    x = "Ejecución correcta (%)",
+    y = NULL,
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    strip.text.y = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+
+
+ggsave(
+  filename = "grafico_barras_pasos_tecnicos_reel_vs_corto.png",
+  plot = grafico_barras,
+  width = 10,
+  height = 7,
+  dpi = 300
+)
+
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(gt)
+library(ggplot2)
+library(purrr)
+
+
+to_seconds <- function(x) {
+  
+ 
+  if (inherits(x, "hms") || inherits(x, "difftime")) {
+    return(as.numeric(x, units = "secs"))
+  }
+  
+  
+  if (inherits(x, "POSIXct") || inherits(x, "POSIXt")) {
+    return(
+      lubridate::hour(x) * 3600 +
+        lubridate::minute(x) * 60 +
+        lubridate::second(x)
+    )
+  }
+  
+ 
+  x_chr <- stringr::str_trim(as.character(x))
+  x_chr[x_chr %in% c(".", "", "NA", "NaN", "NULL", "null")] <- NA_character_
+  
+ 
+  out <- suppressWarnings(as.numeric(x_chr))
+  
+  
+  idx_excel <- !is.na(out) & out > 0 & out < 1
+  out[idx_excel] <- out[idx_excel] * 86400
+  
+ 
+  is_hms <- stringr::str_detect(
+    x_chr,
+    "^\\d{1,2}:\\d{2}:\\d{2}(\\.\\d+)?$"
+  )
+  
+  
+  is_hms[is.na(is_hms)] <- FALSE
+  
+  if (any(is_hms)) {
+    out[is_hms] <- suppressWarnings(
+      lubridate::period_to_seconds(lubridate::hms(x_chr[is_hms]))
+    )
+  }
+  
+  return(as.numeric(out))
+}
+
+
+df_tiempos <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto/Amor",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto/Amor")),
+    
+    sp_tiempo_medicacion_s = to_seconds(sp_tiempo_medicacion),
+    sp_tiempo112_s         = to_seconds(sp_tiempo112),
+    au_tiempo_medicacion_s = to_seconds(au_tiempo_medicacion),
+    au_tiempo112_s         = to_seconds(au_tiempo112)
+  )
+
+
+summary(
+  df_tiempos %>%
+    select(
+      sp_tiempo_medicacion_s,
+      sp_tiempo112_s,
+      au_tiempo_medicacion_s,
+      au_tiempo112_s
+    )
+)
+
+tiempos_long <- df_tiempos %>%
+  select(
+    id,
+    video_grupo,
+    sp_tiempo_medicacion_s,
+    sp_tiempo112_s,
+    au_tiempo_medicacion_s,
+    au_tiempo112_s
+  ) %>%
+  pivot_longer(
+    cols = c(
+      sp_tiempo_medicacion_s,
+      sp_tiempo112_s,
+      au_tiempo_medicacion_s,
+      au_tiempo112_s
+    ),
+    names_to = "variable",
+    values_to = "tiempo_s"
+  ) %>%
+  mutate(
+    dispositivo = case_when(
+      str_starts(variable, "sp_") ~ "Spray nasal",
+      str_starts(variable, "au_") ~ "Autoinyector"
+    ),
+    evento = case_when(
+      str_detect(variable, "tiempo_medicacion") ~ "Administrar adrenalina",
+      str_detect(variable, "tiempo112") ~ "Llamar al 112"
+    ),
+    dispositivo = factor(
+      dispositivo,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    evento = factor(
+      evento,
+      levels = c("Administrar adrenalina", "Llamar al 112")
+    )
+  )
+
+
+valores_extremos_tiempos <- tiempos_long %>%
+  filter(!is.na(tiempo_s)) %>%
+  arrange(desc(tiempo_s))
+
+valores_extremos_tiempos
+
+
+resumen_tiempos <- tiempos_long %>%
+  group_by(dispositivo, evento, video_grupo) %>%
+  summarise(
+    n = sum(!is.na(tiempo_s)),
+    media = mean(tiempo_s, na.rm = TRUE),
+    sd = sd(tiempo_s, na.rm = TRUE),
+    mediana = median(tiempo_s, na.rm = TRUE),
+    q1 = quantile(tiempo_s, 0.25, na.rm = TRUE),
+    q3 = quantile(tiempo_s, 0.75, na.rm = TRUE),
+    minimo = min(tiempo_s, na.rm = TRUE),
+    maximo = max(tiempo_s, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+resumen_tiempos
+
+
+resumen_tiempos_total <- tiempos_long %>%
+  group_by(dispositivo, evento) %>%
+  summarise(
+    video_grupo = "Total",
+    n = sum(!is.na(tiempo_s)),
+    media = mean(tiempo_s, na.rm = TRUE),
+    sd = sd(tiempo_s, na.rm = TRUE),
+    mediana = median(tiempo_s, na.rm = TRUE),
+    q1 = quantile(tiempo_s, 0.25, na.rm = TRUE),
+    q3 = quantile(tiempo_s, 0.75, na.rm = TRUE),
+    minimo = min(tiempo_s, na.rm = TRUE),
+    maximo = max(tiempo_s, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+resumen_tiempos_total
+
+
+p_tiempos <- tiempos_long %>%
+  filter(!is.na(tiempo_s)) %>%
+  group_by(dispositivo, evento) %>%
+  summarise(
+    p_valor = tryCatch(
+      wilcox.test(tiempo_s ~ video_grupo)$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_valor_fmt = case_when(
+      is.na(p_valor) ~ "",
+      p_valor < 0.001 ~ "<0.001",
+      TRUE ~ sprintf("%.3f", p_valor)
+    )
+  )
+
+p_tiempos
+
+
+formato_media_sd <- function(media, sd) {
+  paste0(
+    sprintf("%.1f", media),
+    " ± ",
+    sprintf("%.1f", sd)
+  )
+}
+
+formato_mediana_iqr <- function(mediana, q1, q3) {
+  paste0(
+    sprintf("%.1f", mediana),
+    " [",
+    sprintf("%.1f", q1),
+    "-",
+    sprintf("%.1f", q3),
+    "]"
+  )
+}
+
+tabla_tiempos_total <- resumen_tiempos_total %>%
+  mutate(
+    grupo = "Total",
+    resultado = paste0(
+      formato_media_sd(media, sd),
+      "\n",
+      formato_mediana_iqr(mediana, q1, q3)
+    )
+  ) %>%
+  select(dispositivo, evento, grupo, resultado)
+
+tabla_tiempos_grupo <- resumen_tiempos %>%
+  mutate(
+    grupo = as.character(video_grupo),
+    resultado = paste0(
+      formato_media_sd(media, sd),
+      "\n",
+      formato_mediana_iqr(mediana, q1, q3)
+    )
+  ) %>%
+  select(dispositivo, evento, grupo, resultado)
+
+tabla_tiempos_publicacion <- bind_rows(
+  tabla_tiempos_total,
+  tabla_tiempos_grupo
+) %>%
+  pivot_wider(
+    names_from = grupo,
+    values_from = resultado
+  ) %>%
+  left_join(p_tiempos, by = c("dispositivo", "evento")) %>%
+  select(
+    dispositivo,
+    evento,
+    Total,
+    Reel,
+    `Corto/Amor`,
+    p_valor,
+    p_valor_fmt
+  )
+
+tabla_tiempos_publicacion
+
+
+tabla_tiempos_gt <- tabla_tiempos_publicacion %>%
+  gt(groupname_col = "dispositivo") %>%
+  cols_label(
+    evento = "Evento",
+    Total = "Total",
+    Reel = "Reel",
+    `Corto/Amor` = "Corto / Amor",
+    p_valor_fmt = "p"
+  ) %>%
+  cols_hide(
+    columns = p_valor
+  ) %>%
+  tab_header(
+    title = md("**Tiempos de actuación según dispositivo y tipo de vídeo**"),
+    subtitle = md("Media ± DE y mediana [IQR], expresadas en segundos")
+  ) %>%
+  tab_spanner(
+    label = "Tipo de vídeo",
+    columns = c(Reel, `Corto/Amor`)
+  ) %>%
+  tab_source_note(
+    source_note = md(
+      "El p-valor compara Reel frente a Corto/Amor mediante test de Wilcoxon-Mann-Whitney.  
+      Cada celda muestra: media ± DE y, debajo, mediana [IQR]."
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#F2F2F2"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      columns = p_valor_fmt,
+      rows = p_valor < 0.05
+    )
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = evento
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(Total, Reel, `Corto/Amor`, p_valor_fmt)
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 12,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    row_group.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    data_row.padding = px(6),
+    source_notes.font.size = 10
+  )
+
+Sys.setenv(
+  CHROMOTE_CHROME = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+)
+
+gtsave(
+  data = tabla_tiempos_gt,
+  filename = "tabla_tiempos_dispositivo_video.png",
+  expand = 10
+)
+
+
+grafico_tiempos_media <- resumen_tiempos %>%
+  ggplot(
+    aes(
+      x = dispositivo,
+      y = media,
+      fill = video_grupo
+    )
+  ) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = pmax(media - sd, 0),
+      ymax = media + sd
+    ),
+    position = position_dodge(width = 0.8),
+    width = 0.2
+  ) +
+  geom_text(
+    aes(
+      y = 2,
+      label = paste0(sprintf("%.1f", media), " s")
+    ),
+    position = position_dodge(width = 0.8),
+    vjust = 0,
+    size = 3.4,
+    color = "black"
+  ) +
+  facet_wrap(~ evento, scales = "free_y") +
+  coord_cartesian(ylim = c(0, NA)) +
+  labs(
+    title = "Tiempo medio de actuación según dispositivo y tipo de vídeo",
+    subtitle = "Barras: media; líneas: desviación estándar",
+    x = NULL,
+    y = "Tiempo medio, segundos",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+
+
+ggsave(
+  filename = "grafico_tiempos_media_dispositivo_video.png",
+  plot = grafico_tiempos_media,
+  width = 9,
+  height = 6,
+  dpi = 300
+)
+
+
+grafico_tiempos_mediana <- resumen_tiempos %>%
+  ggplot(
+    aes(
+      x = dispositivo,
+      y = mediana,
+      fill = video_grupo
+    )
+  ) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = pmax(q1, 0),
+      ymax = q3
+    ),
+    position = position_dodge(width = 0.8),
+    width = 0.2
+  ) +
+  geom_text(
+    aes(
+      y = 2,
+      label = paste0(sprintf("%.1f", mediana), " s")
+    ),
+    position = position_dodge(width = 0.8),
+    vjust = 0,
+    size = 3.4,
+    color = "black"
+  ) +
+  facet_wrap(~ evento, scales = "free_y") +
+  coord_cartesian(ylim = c(0, NA)) +
+  labs(
+    title = "Tiempo de actuación según dispositivo y tipo de vídeo",
+    subtitle = "Barras: mediana; líneas: rango intercuartílico",
+    x = NULL,
+    y = "Tiempo, segundos",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+
+
+ggsave(
+  filename = "grafico_tiempos_mediana_dispositivo_video.png",
+  plot = grafico_tiempos_mediana,
+  width = 9,
+  height = 6,
+  dpi = 300
+)
+```
+
+```{r}
+
+library(dplyr)
+library(stringr)
+library(stringi)
+
+df <- df %>%
+  mutate(
+    
+    au_texto_libre = paste(
+      coalesce(as.character(au_motivo), ""),
+      coalesce(as.character(au_comentarios), ""),
+      sep = " "
+    ),
+    
+    
+    au_texto_libre_limpio = au_texto_libre %>%
+      str_to_lower() %>%
+      stringi::stri_trans_general("Latin-ASCII"),
+    
+    
+    au_autopinchazo = case_when(
+      str_detect(
+        au_texto_libre_limpio,
+        paste(
+          c(
+            "se pincha",
+            "autopincha",
+            "auto pincha",
+            "pincha el mismo",
+            "pincha ella sola",
+            "pincha el solo",
+            "pincha sola",
+            "pincha solo",
+            "pincha su dedo",
+            "pincha el dedo",
+            "pincha el pulgar",
+            "sobre su dedo"
+          ),
+          collapse = "|"
+        )
+      ) ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(stringi)
+library(scales)
+
+
+df <- df %>%
+  mutate(
+    au_texto_libre = paste(
+      coalesce(as.character(au_motivo), ""),
+      coalesce(as.character(au_comentarios), ""),
+      sep = " "
+    ),
+    
+    au_texto_libre_limpio = au_texto_libre %>%
+      str_to_lower() %>%
+      stringi::stri_trans_general("Latin-ASCII"),
+    
+    au_autopinchazo = case_when(
+      str_detect(
+        au_texto_libre_limpio,
+        paste(
+          c(
+            "se pincha",
+            "se pincho",
+            "autopincha",
+            "auto pincha",
+            "auto-pincha",
+            "pinchazo",
+            "se clava",
+            "se lo clava",
+            "pincha el mismo",
+            "pincha ella sola",
+            "pincha el solo",
+            "pincha sola",
+            "pincha solo",
+            "pincha su dedo",
+            "pincha el dedo",
+            "pincha en el dedo",
+            "pincha el pulgar",
+            "pincha en el pulgar",
+            "sobre su dedo",
+            "en su dedo",
+            "dedo",
+            "pulgar"
+          ),
+          collapse = "|"
+        )
+      ) ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+table(df$au_autopinchazo, useNA = "ifany")
+
+df %>%
+  filter(au_autopinchazo == 1) %>%
+  select(
+    id,
+    au_motivo,
+    au_comentarios,
+    au_autopinchazo
+  )
+
+
+vars_spray <- c(
+  "sp_coge_ok",
+  "sp_prueba",
+  "sp_punta",
+  "sp_dedos",
+  "sp_pulgar",
+  "sp_efectivo",
+  "sp_112"
+)
+
+vars_autoinyector <- c(
+  "au_tapa",
+  "au_puno",
+  "au_encara",
+  "au_press",
+  "au_muslo",
+  "au_10seg",
+  "au_masaje",
+  "au_efectivo",
+  "au_112",
+  "au_autopinchazo"
+)
+
+vars_tecnicas_error <- c(
+  vars_spray,
+  vars_autoinyector
+)
+
+
+diccionario_errores <- tibble(
+  variable = c(vars_spray, vars_autoinyector),
+  dispositivo = c(
+    rep("Spray", length(vars_spray)),
+    rep("Autoinyector", length(vars_autoinyector))
+  ),
+  error = c(
+    # Spray
+    "Agarre incorrecto",
+    "Lo prueba antes / disparo al aire",
+    "No direcciona correctamente",
+    "Profundidad incorrecta",
+    "No presiona émbolo",
+    "No administra adrenalina",
+    "No llama al 112",
+    
+    # Autoinyector
+    "No retira tapa",
+    "Agarre incorrecto",
+    "Mala orientación autoinyector",
+    "Presión insuficiente",
+    "No administra en muslo",
+    "No mantiene 10 s",
+    "No masajea la zona",
+    "No administra adrenalina",
+    "No llama al 112",
+    "Autopinchazo"
+  ),
+  tipo_variable = c(
+    rep("correcta_1", length(vars_spray)),
+    rep("correcta_1", length(vars_autoinyector) - 1),
+    "error_1"
+  ),
+  orden = c(
+    seq_along(vars_spray),
+    seq_along(vars_autoinyector)
+  )
+)
+
+diccionario_errores
+
+
+errores_long <- df %>%
+  select(all_of(vars_tecnicas_error)) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "valor"
+  ) %>%
+  left_join(diccionario_errores, by = "variable") %>%
+  mutate(
+    valor = as.numeric(valor),
+    
+    error_binario = case_when(
+      # Variables donde 1 = correcto y 0 = error
+      tipo_variable == "correcta_1" & valor == 0 ~ 1,
+      tipo_variable == "correcta_1" & valor == 1 ~ 0,
+      
+      # Variable donde 1 = error
+      tipo_variable == "error_1" & valor == 1 ~ 1,
+      tipo_variable == "error_1" & valor == 0 ~ 0,
+      
+      TRUE ~ NA_real_
+    )
+  )
+
+
+resumen_errores <- errores_long %>%
+  group_by(dispositivo, variable, error, orden) %>%
+  summarise(
+    n = sum(!is.na(error_binario)),
+    errores = sum(error_binario == 1, na.rm = TRUE),
+    proporcion = errores / n,
+    porcentaje = 100 * proporcion,
+    .groups = "drop"
+  )
+
+resumen_errores
+
+
+resumen_errores_plot <- resumen_errores %>%
+  mutate(
+    error_unico = paste(dispositivo, error, sep = " - ")
+  )
+
+orden_errores <- resumen_errores_plot %>%
+  arrange(desc(proporcion)) %>%
+  pull(error_unico)
+
+resumen_errores_plot <- resumen_errores_plot %>%
+  mutate(
+    error_unico = factor(error_unico, levels = rev(orden_errores)),
+    dispositivo = factor(dispositivo, levels = c("Autoinyector", "Spray")),
+    etiqueta_pct = paste0(sprintf("%.1f", porcentaje), "%")
+  )
+
+heatmap_errores <- ggplot(
+  resumen_errores_plot,
+  aes(
+    x = dispositivo,
+    y = error_unico,
+    fill = proporcion
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(
+    aes(label = etiqueta_pct),
+    size = 4,
+    color = "black"
+  ) +
+  scale_y_discrete(
+    labels = function(x) str_remove(x, "^.* - ")
+  ) +
+  scale_fill_gradient(
+    low = "white",
+    high = "#2C7FB8",
+    labels = percent_format(accuracy = 1),
+    name = "Proporción"
+  ) +
+  labs(
+    title = "Heatmap de errores por dispositivo",
+    subtitle = "Proporción de participantes que cometen cada error",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 17),
+    plot.subtitle = element_text(size = 11),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+
+heatmap_errores
+
+ggsave(
+  filename = "heatmap_errores_por_dispositivo_con_autopinchazo.png",
+  plot = heatmap_errores,
+  width = 11,
+  height = 7,
+  dpi = 300
+)
+
+
+resumen_errores_plot_filtrado <- resumen_errores %>%
+  filter(proporcion >= 0.05) %>%
+  mutate(
+    error_unico = paste(dispositivo, error, sep = " - ")
+  )
+
+orden_errores_filtrado <- resumen_errores_plot_filtrado %>%
+  arrange(desc(proporcion)) %>%
+  pull(error_unico)
+
+resumen_errores_plot_filtrado <- resumen_errores_plot_filtrado %>%
+  mutate(
+    error_unico = factor(error_unico, levels = rev(orden_errores_filtrado)),
+    dispositivo = factor(dispositivo, levels = c("Autoinyector", "Spray")),
+    etiqueta_pct = paste0(sprintf("%.1f", porcentaje), "%")
+  )
+
+heatmap_errores_filtrado <- ggplot(
+  resumen_errores_plot_filtrado,
+  aes(
+    x = dispositivo,
+    y = error_unico,
+    fill = proporcion
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(
+    aes(label = etiqueta_pct),
+    size = 4,
+    color = "black"
+  ) +
+  scale_y_discrete(
+    labels = function(x) str_remove(x, "^.* - ")
+  ) +
+  scale_fill_gradient(
+    low = "white",
+    high = "#2C7FB8",
+    labels = percent_format(accuracy = 1),
+    name = "Proporción"
+  ) +
+  labs(
+    title = "Errores más comunes por dispositivo",
+    subtitle = "Se muestran errores con frecuencia ≥5%",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 17),
+    plot.subtitle = element_text(size = 11),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+
+heatmap_errores_filtrado
+
+ggsave(
+  filename = "heatmap_errores_frecuentes_por_dispositivo_con_autopinchazo.png",
+  plot = heatmap_errores_filtrado,
+  width = 11,
+  height = 7,
+  dpi = 300
+)
+
+
+errores_video_long <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto"))
+  ) %>%
+  select(video_grupo, all_of(vars_tecnicas_error)) %>%
+  pivot_longer(
+    cols = all_of(vars_tecnicas_error),
+    names_to = "variable",
+    values_to = "valor"
+  ) %>%
+  left_join(diccionario_errores, by = "variable") %>%
+  mutate(
+    valor = as.numeric(valor),
+    
+    error_binario = case_when(
+      tipo_variable == "correcta_1" & valor == 0 ~ 1,
+      tipo_variable == "correcta_1" & valor == 1 ~ 0,
+      
+      tipo_variable == "error_1" & valor == 1 ~ 1,
+      tipo_variable == "error_1" & valor == 0 ~ 0,
+      
+      TRUE ~ NA_real_
+    )
+  )
+
+resumen_errores_video <- errores_video_long %>%
+  group_by(dispositivo, video_grupo, variable, error, orden) %>%
+  summarise(
+    n = sum(!is.na(error_binario)),
+    errores = sum(error_binario == 1, na.rm = TRUE),
+    proporcion = errores / n,
+    porcentaje = 100 * proporcion,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    error_unico = paste(dispositivo, error, sep = " - "),
+    etiqueta_pct = paste0(sprintf("%.1f", porcentaje), "%")
+  )
+
+orden_errores_video <- resumen_errores_video %>%
+  group_by(error_unico) %>%
+  summarise(
+    proporcion_media = mean(proporcion, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(proporcion_media) %>%
+  pull(error_unico)
+
+resumen_errores_video <- resumen_errores_video %>%
+  mutate(
+    error_unico = factor(error_unico, levels = orden_errores_video),
+    dispositivo = factor(dispositivo, levels = c("Autoinyector", "Spray"))
+  )
+
+heatmap_errores_video <- ggplot(
+  resumen_errores_video,
+  aes(
+    x = video_grupo,
+    y = error_unico,
+    fill = proporcion
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(
+    aes(label = etiqueta_pct),
+    size = 3.8,
+    color = "black"
+  ) +
+  facet_grid(
+    dispositivo ~ .,
+    scales = "free_y",
+    space = "free_y"
+  ) +
+  scale_y_discrete(
+    labels = function(x) str_remove(x, "^.* - ")
+  ) +
+  scale_fill_gradient(
+    low = "white",
+    high = "#2C7FB8",
+    labels = percent_format(accuracy = 1),
+    name = "Proporción"
+  ) +
+  labs(
+    title = "Heatmap de errores según tipo de vídeo",
+    subtitle = "Proporción de participantes que cometen cada error",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 17),
+    plot.subtitle = element_text(size = 11),
+    strip.text.y = element_text(face = "bold", size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+
+heatmap_errores_video
+
+ggsave(
+  filename = "heatmap_errores_por_video_con_autopinchazo.png",
+  plot = heatmap_errores_video,
+  width = 10,
+  height = 8,
+  dpi = 300
+)
+
+
+df %>%
+  summarise(
+    n_total = n(),
+    n_autopinchazo = sum(au_autopinchazo == 1, na.rm = TRUE),
+    porcentaje_autopinchazo = 100 * mean(au_autopinchazo == 1, na.rm = TRUE)
+  )
+
+df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    )
+  ) %>%
+  group_by(video_grupo) %>%
+  summarise(
+    n_total = n(),
+    n_autopinchazo = sum(au_autopinchazo == 1, na.rm = TRUE),
+    porcentaje_autopinchazo = 100 * mean(au_autopinchazo == 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+```
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(stringi)
+library(ggplot2)
+library(gt)
+library(scales)
+library(forcats)
+
+vars_spray <- c(
+  "sp_coge_ok",
+  "sp_prueba",
+  "sp_punta",
+  "sp_dedos",
+  "sp_pulgar",
+  "sp_efectivo",
+  "sp_112"
+)
+
+vars_autoinyector <- c(
+  "au_tapa",
+  "au_puno",
+  "au_encara",
+  "au_press",
+  "au_muslo",
+  "au_10seg",
+  "au_masaje",
+  "au_efectivo",
+  "au_112"
+)
+
+col_auto_facil_q <- names(df)[
+  str_detect(names(df), "^x16_") |
+    str_detect(names(df), "autoinyector.*facil.*riesgo")
+][1]
+
+col_spray_facil_q <- names(df)[
+  str_detect(names(df), "^x17_") |
+    str_detect(names(df), "spray.*facil.*riesgo")
+][1]
+
+col_preferencia_q <- names(df)[
+  str_detect(names(df), "^x18_") |
+    str_detect(names(df), "emergencia.*ambos.*dispositivos")
+][1]
+
+
+df_cuestionario <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto")),
+    
+    
+    q_auto_facil = suppressWarnings(as.numeric(.data[[col_auto_facil_q]])),
+    q_spray_facil = suppressWarnings(as.numeric(.data[[col_spray_facil_q]])),
+    
+    
+    q_preferencia_original = as.character(.data[[col_preferencia_q]]),
+    q_preferencia_limpia = q_preferencia_original %>%
+      str_to_lower() %>%
+      stringi::stri_trans_general("Latin-ASCII") %>%
+      str_squish(),
+    
+    q_preferencia = case_when(
+      str_detect(q_preferencia_limpia, "spray") &
+        !str_detect(q_preferencia_limpia, "autoinyector") ~ "Spray nasal",
+      
+      str_detect(q_preferencia_limpia, "autoinyector") &
+        !str_detect(q_preferencia_limpia, "spray") &
+        !str_detect(q_preferencia_limpia, "indiferente") ~ "Autoinyector",
+      
+      str_detect(q_preferencia_limpia, "indiferente") ~ "Indiferente",
+      
+      str_detect(q_preferencia_limpia, "spray") &
+        str_detect(q_preferencia_limpia, "autoinyector") ~ "Respuesta múltiple",
+      
+      TRUE ~ "Otra / no clara"
+    ),
+    
+    q_preferencia = factor(
+      q_preferencia,
+      levels = c(
+        "Spray nasal",
+        "Autoinyector",
+        "Indiferente",
+        "Respuesta múltiple",
+        "Otra / no clara"
+      )
+    ),
+    
+    
+    q_preferencia_dic = case_when(
+      q_preferencia == "Spray nasal" ~ "Spray nasal",
+      q_preferencia == "Autoinyector" ~ "Autoinyector",
+      TRUE ~ NA_character_
+    ),
+    q_preferencia_dic = factor(
+      q_preferencia_dic,
+      levels = c("Spray nasal", "Autoinyector")
+    )
+  ) %>%
+  mutate(
+    
+    spray_score = rowSums(across(all_of(vars_spray)), na.rm = TRUE),
+    autoinyector_score = rowSums(across(all_of(vars_autoinyector)), na.rm = TRUE),
+    
+    spray_score_pct = 100 * spray_score / length(vars_spray),
+    autoinyector_score_pct = 100 * autoinyector_score / length(vars_autoinyector)
+  )
+
+
+resumen_percepcion_video <- df_cuestionario %>%
+  select(
+    video_grupo,
+    q_auto_facil,
+    q_spray_facil
+  ) %>%
+  pivot_longer(
+    cols = c(q_auto_facil, q_spray_facil),
+    names_to = "dispositivo",
+    values_to = "puntuacion"
+  ) %>%
+  mutate(
+    dispositivo = recode(
+      dispositivo,
+      q_auto_facil = "Autoinyector",
+      q_spray_facil = "Spray nasal"
+    ),
+    dispositivo = factor(dispositivo, levels = c("Spray nasal", "Autoinyector"))
+  ) %>%
+  group_by(dispositivo, video_grupo) %>%
+  summarise(
+    n = sum(!is.na(puntuacion)),
+    media = mean(puntuacion, na.rm = TRUE),
+    sd = sd(puntuacion, na.rm = TRUE),
+    mediana = median(puntuacion, na.rm = TRUE),
+    q1 = quantile(puntuacion, 0.25, na.rm = TRUE),
+    q3 = quantile(puntuacion, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+resumen_percepcion_video
+
+
+p_percepcion_video <- df_cuestionario %>%
+  select(
+    video_grupo,
+    q_auto_facil,
+    q_spray_facil
+  ) %>%
+  pivot_longer(
+    cols = c(q_auto_facil, q_spray_facil),
+    names_to = "dispositivo",
+    values_to = "puntuacion"
+  ) %>%
+  mutate(
+    dispositivo = recode(
+      dispositivo,
+      q_auto_facil = "Autoinyector",
+      q_spray_facil = "Spray nasal"
+    )
+  ) %>%
+  filter(!is.na(puntuacion), !is.na(video_grupo)) %>%
+  group_by(dispositivo) %>%
+  summarise(
+    p_valor = tryCatch(
+      wilcox.test(puntuacion ~ video_grupo)$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_valor_fmt = case_when(
+      is.na(p_valor) ~ "",
+      p_valor < 0.001 ~ "<0.001",
+      TRUE ~ sprintf("%.3f", p_valor)
+    )
+  )
+
+p_percepcion_video
+
+
+formato_media_sd <- function(media, sd) {
+  paste0(sprintf("%.1f", media), " ± ", sprintf("%.1f", sd))
+}
+
+formato_mediana_iqr <- function(mediana, q1, q3) {
+  paste0(sprintf("%.1f", mediana), " [", sprintf("%.1f", q1), "-", sprintf("%.1f", q3), "]")
+}
+
+tabla_percepcion_publicacion <- resumen_percepcion_video %>%
+  mutate(
+    resultado = paste0(
+      formato_media_sd(media, sd),
+      "\n",
+      formato_mediana_iqr(mediana, q1, q3)
+    )
+  ) %>%
+  select(dispositivo, video_grupo, resultado) %>%
+  pivot_wider(
+    names_from = video_grupo,
+    values_from = resultado
+  ) %>%
+  left_join(p_percepcion_video, by = "dispositivo") %>%
+  select(
+    dispositivo,
+    Reel,
+    `Corto`,
+    p_valor,
+    p_valor_fmt
+  )
+
+tabla_percepcion_gt <- tabla_percepcion_publicacion %>%
+  gt() %>%
+  cols_label(
+    dispositivo = "Dispositivo",
+    Reel = "Reel",
+    `Corto` = "Corto",
+    p_valor_fmt = "p"
+  ) %>%
+  cols_hide(columns = p_valor) %>%
+  tab_header(
+    title = md("**Percepción de facilidad y bajo riesgo de error**"),
+    subtitle = md("Escala 1-5; 5 = muy fácil y poco riesgo de equivocaciones")
+  ) %>%
+  tab_source_note(
+    source_note = md(
+      "Cada celda muestra media ± DE y debajo mediana [IQR].  
+      El p-valor compara Reel frente a Corto/Amor mediante Wilcoxon-Mann-Whitney."
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      columns = p_valor_fmt,
+      rows = p_valor < 0.05
+    )
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(Reel, `Corto`, p_valor_fmt)
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = dispositivo
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 12,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    data_row.padding = px(6),
+    source_notes.font.size = 10
+  )
+
+tabla_percepcion_gt
+
+gtsave(
+  tabla_percepcion_gt,
+  filename = "tabla_percepcion_facilidad_video.png",
+  expand = 10
+)
+
+
+tabla_preferencia <- df_cuestionario %>%
+  count(video_grupo, q_preferencia) %>%
+  group_by(video_grupo) %>%
+  mutate(
+    porcentaje = 100 * n / sum(n)
+  ) %>%
+  ungroup()
+
+tabla_preferencia
+
+tabla_preferencia_dic <- df_cuestionario %>%
+  filter(!is.na(q_preferencia_dic)) %>%
+  count(video_grupo, q_preferencia_dic) %>%
+  group_by(video_grupo) %>%
+  mutate(
+    porcentaje = 100 * n / sum(n)
+  ) %>%
+  ungroup()
+
+tabla_preferencia_dic
+
+
+tabla_fisher_preferencia <- table(
+  df_cuestionario$q_preferencia_dic,
+  df_cuestionario$video_grupo,
+  useNA = "no"
+)
+
+tabla_fisher_preferencia
+
+p_preferencia <- fisher.test(tabla_fisher_preferencia)$p.value
+p_preferencia
+
+
+percepcion_long <- df_cuestionario %>%
+  select(
+    id,
+    video_grupo,
+    q_auto_facil,
+    q_spray_facil
+  ) %>%
+  pivot_longer(
+    cols = c(q_auto_facil, q_spray_facil),
+    names_to = "dispositivo",
+    values_to = "puntuacion"
+  ) %>%
+  mutate(
+    dispositivo = recode(
+      dispositivo,
+      q_auto_facil = "Autoinyector",
+      q_spray_facil = "Spray nasal"
+    ),
+    dispositivo = factor(dispositivo, levels = c("Spray nasal", "Autoinyector"))
+  )
+
+grafico_percepcion <- ggplot(
+  percepcion_long,
+  aes(
+    x = dispositivo,
+    y = puntuacion,
+    fill = video_grupo
+  )
+) +
+  geom_boxplot(
+    position = position_dodge(width = 0.8),
+    width = 0.65,
+    alpha = 0.8,
+    outlier.shape = NA
+  ) +
+  geom_jitter(
+    aes(color = video_grupo),
+    position = position_jitterdodge(
+      jitter.width = 0.12,
+      dodge.width = 0.8
+    ),
+    size = 2,
+    alpha = 0.7
+  ) +
+  scale_y_continuous(
+    limits = c(1, 5),
+    breaks = 1:5
+  ) +
+  labs(
+    title = "Percepción de facilidad y bajo riesgo de error",
+    subtitle = "Escala 1-5; 5 = muy fácil y poco riesgo de equivocaciones",
+    x = NULL,
+    y = "Puntuación",
+    fill = "Vídeo",
+    color = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_percepcion
+
+ggsave(
+  filename = "grafico_percepcion_facilidad_video.png",
+  plot = grafico_percepcion,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+
+grafico_preferencia <- df_cuestionario %>%
+  filter(!is.na(q_preferencia)) %>%
+  count(video_grupo, q_preferencia) %>%
+  group_by(video_grupo) %>%
+  mutate(
+    porcentaje = 100 * n / sum(n),
+    etiqueta = paste0(n, " (", sprintf("%.1f", porcentaje), "%)")
+  ) %>%
+  ungroup() %>%
+  ggplot(
+    aes(
+      x = video_grupo,
+      y = porcentaje,
+      fill = q_preferencia
+    )
+  ) +
+  geom_col(position = "stack", width = 0.7) +
+  geom_text(
+    aes(label = etiqueta),
+    position = position_stack(vjust = 0.5),
+    size = 3.4
+  ) +
+  scale_y_continuous(
+    limits = c(0, 100),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Preferencia de dispositivo en una emergencia real",
+    subtitle = paste0(
+      "Preferencia dicotómica Reel vs Corto: p = ",
+      ifelse(p_preferencia < 0.001, "<0.001", sprintf("%.3f", p_preferencia))
+    ),
+    x = NULL,
+    y = "Porcentaje",
+    fill = "Dispositivo preferido"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_preferencia
+
+ggsave(
+  filename = "grafico_preferencia_emergencia_video.png",
+  plot = grafico_preferencia,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+percepcion_resultado_long <- df_cuestionario %>%
+  select(
+    id,
+    video_grupo,
+    q_auto_facil,
+    q_spray_facil,
+    au_efectivo,
+    sp_efectivo,
+    autoinyector_score_pct,
+    spray_score_pct
+  ) %>%
+  pivot_longer(
+    cols = c(q_auto_facil, q_spray_facil),
+    names_to = "percepcion_var",
+    values_to = "percepcion"
+  ) %>%
+  mutate(
+    dispositivo = case_when(
+      percepcion_var == "q_auto_facil" ~ "Autoinyector",
+      percepcion_var == "q_spray_facil" ~ "Spray nasal"
+    ),
+    efectivo = case_when(
+      dispositivo == "Autoinyector" ~ as.numeric(au_efectivo),
+      dispositivo == "Spray nasal" ~ as.numeric(sp_efectivo)
+    ),
+    score_pct = case_when(
+      dispositivo == "Autoinyector" ~ autoinyector_score_pct,
+      dispositivo == "Spray nasal" ~ spray_score_pct
+    ),
+    dispositivo = factor(dispositivo, levels = c("Spray nasal", "Autoinyector")),
+    efectivo = factor(
+      efectivo,
+      levels = c(0, 1),
+      labels = c("No administra", "Administra")
+    )
+  )
+
+
+tabla_percepcion_vs_efectivo <- percepcion_resultado_long %>%
+  group_by(dispositivo, efectivo) %>%
+  summarise(
+    n = sum(!is.na(percepcion)),
+    media_percepcion = mean(percepcion, na.rm = TRUE),
+    sd_percepcion = sd(percepcion, na.rm = TRUE),
+    mediana_percepcion = median(percepcion, na.rm = TRUE),
+    q1 = quantile(percepcion, 0.25, na.rm = TRUE),
+    q3 = quantile(percepcion, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+tabla_percepcion_vs_efectivo
+
+
+cor_percepcion_score <- percepcion_resultado_long %>%
+  filter(!is.na(percepcion), !is.na(score_pct)) %>%
+  group_by(dispositivo) %>%
+  summarise(
+    n = n(),
+    rho_spearman = cor(percepcion, score_pct, method = "spearman"),
+    p_valor = cor.test(percepcion, score_pct, method = "spearman")$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_valor_fmt = case_when(
+      p_valor < 0.001 ~ "<0.001",
+      TRUE ~ sprintf("%.3f", p_valor)
+    )
+  )
+
+cor_percepcion_score
+
+
+grafico_percepcion_score <- ggplot(
+  percepcion_resultado_long,
+  aes(
+    x = percepcion,
+    y = score_pct,
+    color = video_grupo
+  )
+) +
+  geom_jitter(
+    width = 0.08,
+    height = 1.5,
+    alpha = 0.75,
+    size = 2.3
+  ) +
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    linewidth = 0.7
+  ) +
+  facet_wrap(~ dispositivo) +
+  scale_x_continuous(
+    limits = c(1, 5),
+    breaks = 1:5
+  ) +
+  scale_y_continuous(
+    limits = c(0, 100),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Relación entre percepción subjetiva y rendimiento técnico",
+    subtitle = "Percepción: 1-5; rendimiento: porcentaje de pasos correctos",
+    x = "Percepción de facilidad y bajo riesgo de error",
+    y = "Pasos técnicos correctos (%)",
+    color = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.minor = element_blank()
+  )
+
+grafico_percepcion_score
+
+ggsave(
+  filename = "grafico_percepcion_vs_score_tecnico.png",
+  plot = grafico_percepcion_score,
+  width = 9,
+  height = 6,
+  dpi = 300
+)
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(stringi)
+library(ggplot2)
+library(scales)
+library(forcats)
+
+
+vars_spray <- c(
+  "sp_coge_ok",
+  "sp_prueba",
+  "sp_punta",
+  "sp_dedos",
+  "sp_pulgar",
+  "sp_efectivo",
+  "sp_112"
+)
+
+vars_autoinyector <- c(
+  "au_tapa",
+  "au_puno",
+  "au_encara",
+  "au_press",
+  "au_muslo",
+  "au_10seg",
+  "au_masaje",
+  "au_efectivo",
+  "au_112"
+)
+
+col_auto_facil_q <- names(df)[
+  str_detect(names(df), "^x16_") |
+    str_detect(names(df), "autoinyector.*facil.*riesgo")
+][1]
+
+col_spray_facil_q <- names(df)[
+  str_detect(names(df), "^x17_") |
+    str_detect(names(df), "spray.*facil.*riesgo")
+][1]
+
+col_preferencia_q <- names(df)[
+  str_detect(names(df), "^x18_") |
+    str_detect(names(df), "emergencia.*ambos.*dispositivos")
+][1]
+
+col_auto_facil_q
+col_spray_facil_q
+col_preferencia_q
+
+
+df_cuestionario <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto")),
+    
+    q_auto_facil = suppressWarnings(as.numeric(.data[[col_auto_facil_q]])),
+    q_spray_facil = suppressWarnings(as.numeric(.data[[col_spray_facil_q]])),
+    
+    q_preferencia_original = as.character(.data[[col_preferencia_q]]),
+    q_preferencia_limpia = q_preferencia_original %>%
+      str_to_lower() %>%
+      stringi::stri_trans_general("Latin-ASCII") %>%
+      str_squish(),
+    
+    q_preferencia = case_when(
+      str_detect(q_preferencia_limpia, "spray") &
+        !str_detect(q_preferencia_limpia, "autoinyector") ~ "Spray nasal",
+      
+      str_detect(q_preferencia_limpia, "autoinyector") &
+        !str_detect(q_preferencia_limpia, "spray") &
+        !str_detect(q_preferencia_limpia, "indiferente") ~ "Autoinyector",
+      
+      str_detect(q_preferencia_limpia, "indiferente") ~ "Indiferente",
+      
+      str_detect(q_preferencia_limpia, "spray") &
+        str_detect(q_preferencia_limpia, "autoinyector") ~ "Respuesta múltiple",
+      
+      TRUE ~ "Otra / no clara"
+    ),
+    
+    q_preferencia = factor(
+      q_preferencia,
+      levels = c(
+        "Spray nasal",
+        "Autoinyector",
+        "Indiferente",
+        "Respuesta múltiple",
+        "Otra / no clara"
+      )
+    ),
+    
+    q_preferencia_dic = case_when(
+      q_preferencia == "Spray nasal" ~ "Spray nasal",
+      q_preferencia == "Autoinyector" ~ "Autoinyector",
+      TRUE ~ NA_character_
+    ),
+    q_preferencia_dic = factor(
+      q_preferencia_dic,
+      levels = c("Spray nasal", "Autoinyector")
+    )
+  ) %>%
+  mutate(
+    across(
+      c(all_of(vars_spray), all_of(vars_autoinyector)),
+      ~ suppressWarnings(as.numeric(.x))
+    ),
+    
+    spray_score = rowSums(across(all_of(vars_spray)), na.rm = TRUE),
+    autoinyector_score = rowSums(across(all_of(vars_autoinyector)), na.rm = TRUE),
+    
+    spray_score_pct = 100 * spray_score / length(vars_spray),
+    autoinyector_score_pct = 100 * autoinyector_score / length(vars_autoinyector),
+    
+    sp_efectivo = as.numeric(sp_efectivo),
+    au_efectivo = as.numeric(au_efectivo)
+  )
+
+
+summary(df_cuestionario$q_spray_facil)
+summary(df_cuestionario$q_auto_facil)
+table(df_cuestionario$q_preferencia, useNA = "ifany")
+
+
+percepcion_performance_long <- df_cuestionario %>%
+  select(
+    id,
+    video_grupo,
+    q_spray_facil,
+    q_auto_facil,
+    spray_score_pct,
+    autoinyector_score_pct,
+    sp_efectivo,
+    au_efectivo
+  ) %>%
+  pivot_longer(
+    cols = c(q_spray_facil, q_auto_facil),
+    names_to = "variable_percepcion",
+    values_to = "percepcion_facilidad"
+  ) %>%
+  mutate(
+    dispositivo = case_when(
+      variable_percepcion == "q_spray_facil" ~ "Spray nasal",
+      variable_percepcion == "q_auto_facil" ~ "Autoinyector"
+    ),
+    
+    score_pct = case_when(
+      dispositivo == "Spray nasal" ~ spray_score_pct,
+      dispositivo == "Autoinyector" ~ autoinyector_score_pct
+    ),
+    
+    administra_adrenalina = case_when(
+      dispositivo == "Spray nasal" ~ sp_efectivo,
+      dispositivo == "Autoinyector" ~ au_efectivo
+    ),
+    
+    dispositivo = factor(dispositivo, levels = c("Spray nasal", "Autoinyector")),
+    percepcion_facilidad = factor(
+      percepcion_facilidad,
+      levels = 1:5,
+      ordered = TRUE
+    )
+  )
+
+
+resumen_percepcion_performance <- percepcion_performance_long %>%
+  filter(!is.na(percepcion_facilidad)) %>%
+  group_by(dispositivo, video_grupo, percepcion_facilidad) %>%
+  summarise(
+    n = n(),
+    score_pct_medio = mean(score_pct, na.rm = TRUE),
+    administra_pct = 100 * mean(administra_adrenalina == 1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    etiqueta_n = paste0("n=", n)
+  )
+
+resumen_percepcion_performance
+
+grafico_facilidad_vs_score <- ggplot(
+  resumen_percepcion_performance,
+  aes(
+    x = percepcion_facilidad,
+    y = score_pct_medio,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(
+      label = paste0(round(score_pct_medio), "%")
+    ),
+    position = position_dodge(width = 0.8),
+    vjust = -0.25,
+    size = 3.3
+  ) +
+  geom_text(
+    aes(
+      y = 4,
+      label = etiqueta_n
+    ),
+    position = position_dodge(width = 0.8),
+    size = 3,
+    color = "black"
+  ) +
+  facet_wrap(~ dispositivo) +
+  scale_y_continuous(
+    limits = c(0, 110),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Facilidad percibida y rendimiento técnico real",
+    subtitle = "Barras: porcentaje medio de pasos técnicos correctos",
+    x = "Percepción de facilidad y bajo riesgo de error",
+    y = "Pasos técnicos correctos (%)",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_facilidad_vs_score
+
+ggsave(
+  filename = "grafico_facilidad_vs_score_tecnico.png",
+  plot = grafico_facilidad_vs_score,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+
+grafico_facilidad_vs_administra <- ggplot(
+  resumen_percepcion_performance,
+  aes(
+    x = percepcion_facilidad,
+    y = administra_pct,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(
+      label = paste0(round(administra_pct), "%")
+    ),
+    position = position_dodge(width = 0.8),
+    vjust = -0.25,
+    size = 3.3
+  ) +
+  geom_text(
+    aes(
+      y = 4,
+      label = etiqueta_n
+    ),
+    position = position_dodge(width = 0.8),
+    size = 3,
+    color = "black"
+  ) +
+  facet_wrap(~ dispositivo) +
+  scale_y_continuous(
+    limits = c(0, 110),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Facilidad percibida y administración real de adrenalina",
+    subtitle = "Barras: porcentaje de participantes que administran adrenalina",
+    x = "Percepción de facilidad y bajo riesgo de error",
+    y = "Administra adrenalina (%)",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_facilidad_vs_administra
+
+ggsave(
+  filename = "grafico_facilidad_vs_administra_adrenalina.png",
+  plot = grafico_facilidad_vs_administra,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+
+
+preferencia_performance <- df_cuestionario %>%
+  filter(!is.na(q_preferencia_dic)) %>%
+  mutate(
+    score_metodo_preferido = case_when(
+      q_preferencia_dic == "Spray nasal" ~ spray_score_pct,
+      q_preferencia_dic == "Autoinyector" ~ autoinyector_score_pct
+    ),
+    
+    administra_metodo_preferido = case_when(
+      q_preferencia_dic == "Spray nasal" ~ sp_efectivo,
+      q_preferencia_dic == "Autoinyector" ~ au_efectivo
+    ),
+    
+    facilidad_metodo_preferido = case_when(
+      q_preferencia_dic == "Spray nasal" ~ q_spray_facil,
+      q_preferencia_dic == "Autoinyector" ~ q_auto_facil
+    ),
+    
+    q_preferencia_dic = factor(
+      q_preferencia_dic,
+      levels = c("Spray nasal", "Autoinyector")
+    )
+  )
+
+resumen_preferencia_performance <- preferencia_performance %>%
+  group_by(video_grupo, q_preferencia_dic) %>%
+  summarise(
+    n = n(),
+    score_medio = mean(score_metodo_preferido, na.rm = TRUE),
+    score_sd = sd(score_metodo_preferido, na.rm = TRUE),
+    administra_pct = 100 * mean(administra_metodo_preferido == 1, na.rm = TRUE),
+    facilidad_media = mean(facilidad_metodo_preferido, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    etiqueta_score = paste0(round(score_medio), "%"),
+    etiqueta_administra = paste0(round(administra_pct), "%"),
+    etiqueta_n = paste0("n=", n)
+  )
+
+resumen_preferencia_performance
+
+grafico_preferencia_score <- ggplot(
+  resumen_preferencia_performance,
+  aes(
+    x = q_preferencia_dic,
+    y = score_medio,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = pmax(score_medio - score_sd, 0),
+      ymax = pmin(score_medio + score_sd, 100)
+    ),
+    position = position_dodge(width = 0.8),
+    width = 0.2
+  ) +
+  geom_text(
+    aes(label = etiqueta_score),
+    position = position_dodge(width = 0.8),
+    vjust = -0.25,
+    size = 3.5
+  ) +
+  geom_text(
+    aes(y = 5, label = etiqueta_n),
+    position = position_dodge(width = 0.8),
+    size = 3.2,
+    color = "black"
+  ) +
+  scale_y_continuous(
+    limits = c(0, 110),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Método preferido y rendimiento técnico con ese método",
+    subtitle = "Barras: porcentaje medio de pasos correctos con el dispositivo preferido",
+    x = "Dispositivo preferido en emergencia real",
+    y = "Pasos correctos con el método preferido (%)",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_preferencia_score
+
+ggsave(
+  filename = "grafico_preferencia_vs_score_metodo_preferido.png",
+  plot = grafico_preferencia_score,
+  width = 9,
+  height = 6,
+  dpi = 300
+)
+
+grafico_preferencia_administra <- ggplot(
+  resumen_preferencia_performance,
+  aes(
+    x = q_preferencia_dic,
+    y = administra_pct,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = etiqueta_administra),
+    position = position_dodge(width = 0.8),
+    vjust = -0.25,
+    size = 3.5
+  ) +
+  geom_text(
+    aes(y = 5, label = etiqueta_n),
+    position = position_dodge(width = 0.8),
+    size = 3.2,
+    color = "black"
+  ) +
+  scale_y_continuous(
+    limits = c(0, 110),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Método preferido y administración real de adrenalina",
+    subtitle = "Barras: porcentaje que administra adrenalina usando el dispositivo que preferiría",
+    x = "Dispositivo preferido en emergencia real",
+    y = "Administra adrenalina con el método preferido (%)",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_preferencia_administra
+
+ggsave(
+  filename = "grafico_preferencia_vs_administra_metodo_preferido.png",
+  plot = grafico_preferencia_administra,
+  width = 9,
+  height = 6,
+  dpi = 300
+)
+
+
+resumen_preferencia_largo <- resumen_preferencia_performance %>%
+  select(
+    video_grupo,
+    q_preferencia_dic,
+    facilidad_media,
+    score_medio,
+    administra_pct,
+    n
+  ) %>%
+  pivot_longer(
+    cols = c(facilidad_media, score_medio, administra_pct),
+    names_to = "indicador",
+    values_to = "valor"
+  ) %>%
+  mutate(
+    indicador = recode(
+      indicador,
+      facilidad_media = "Facilidad percibida\n(escala 1-5)",
+      score_medio = "Pasos correctos\n(%)",
+      administra_pct = "Administra adrenalina\n(%)"
+    ),
+    
+    valor_plot = case_when(
+      indicador == "Facilidad percibida\n(escala 1-5)" ~ 100 * valor / 5,
+      TRUE ~ valor
+    ),
+    
+    etiqueta = case_when(
+      indicador == "Facilidad percibida\n(escala 1-5)" ~ sprintf("%.1f/5", valor),
+      TRUE ~ paste0(round(valor), "%")
+    )
+  )
+
+grafico_preferencia_resumen <- ggplot(
+  resumen_preferencia_largo,
+  aes(
+    x = indicador,
+    y = valor_plot,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    position = position_dodge(width = 0.8),
+    vjust = -0.25,
+    size = 3.4
+  ) +
+  facet_wrap(~ q_preferencia_dic) +
+  scale_y_continuous(
+    limits = c(0, 110),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Dispositivo preferido: percepción subjetiva y rendimiento real",
+    subtitle = "La facilidad percibida se reescala a 0-100 para compararla visualmente",
+    x = NULL,
+    y = "Escala visual 0-100",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_preferencia_resumen
+
+ggsave(
+  filename = "grafico_preferencia_percepcion_realidad.png",
+  plot = grafico_preferencia_resumen,
+  width = 11,
+  height = 6,
+  dpi = 300
+)
+
+library(gt)
+
+tabla_preferencia_performance_gt <- resumen_preferencia_performance %>%
+  mutate(
+    facilidad_media = sprintf("%.1f", facilidad_media),
+    score_medio = paste0(sprintf("%.1f", score_medio), "%"),
+    administra_pct = paste0(sprintf("%.1f", administra_pct), "%")
+  ) %>%
+  select(
+    video_grupo,
+    q_preferencia_dic,
+    n,
+    facilidad_media,
+    score_medio,
+    administra_pct
+  ) %>%
+  gt(
+    groupname_col = "q_preferencia_dic"
+  ) %>%
+  cols_label(
+    video_grupo = "Vídeo",
+    n = "n",
+    facilidad_media = "Facilidad percibida",
+    score_medio = "Pasos correctos",
+    administra_pct = "Administra adrenalina"
+  ) %>%
+  tab_header(
+    title = md("**Dispositivo preferido y rendimiento real con ese dispositivo**"),
+    subtitle = md("Resultados según tipo de vídeo")
+  ) %>%
+  tab_source_note(
+    source_note = md(
+      "Facilidad percibida: escala 1-5.  
+      Pasos correctos y administración de adrenalina se calculan usando el dispositivo que cada participante declaró preferir."
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#F2F2F2"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = video_grupo
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 12,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    data_row.padding = px(6),
+    source_notes.font.size = 10
+  )
+
+tabla_preferencia_performance_gt
+
+gtsave(
+  tabla_preferencia_performance_gt,
+  filename = "tabla_preferencia_performance_metodo_preferido.png",
+  expand = 10
+)
+
+
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(gt)
+library(stringr)
+
+
+fmt_p <- function(p) {
+  case_when(
+    is.na(p) ~ "",
+    p < 0.001 ~ "<0.001",
+    TRUE ~ sprintf("%.3f", p)
+  )
+}
+
+fmt_num <- function(x, digits = 1) {
+  ifelse(is.na(x), "", sprintf(paste0("%.", digits, "f"), x))
+}
+
+fmt_ic <- function(low, high, suffix = "") {
+  ifelse(
+    is.na(low) | is.na(high),
+    "",
+    paste0(
+      sprintf("%.1f", low),
+      " a ",
+      sprintf("%.1f", high),
+      suffix
+    )
+  )
+}
+
+
+preferencia_performance <- df_cuestionario %>%
+  filter(!is.na(q_preferencia_dic)) %>%
+  mutate(
+    score_metodo_preferido = case_when(
+      q_preferencia_dic == "Spray nasal" ~ spray_score_pct,
+      q_preferencia_dic == "Autoinyector" ~ autoinyector_score_pct
+    ),
+    
+    administra_metodo_preferido = case_when(
+      q_preferencia_dic == "Spray nasal" ~ sp_efectivo,
+      q_preferencia_dic == "Autoinyector" ~ au_efectivo
+    ),
+    
+    facilidad_metodo_preferido = case_when(
+      q_preferencia_dic == "Spray nasal" ~ q_spray_facil,
+      q_preferencia_dic == "Autoinyector" ~ q_auto_facil
+    ),
+    
+    q_preferencia_dic = factor(
+      q_preferencia_dic,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    
+    video_grupo = factor(
+      video_grupo,
+      levels = c("Reel", "Corto")
+    )
+  )
+
+
+preferencia_indicadores_long <- preferencia_performance %>%
+  select(
+    id,
+    video_grupo,
+    q_preferencia_dic,
+    facilidad_metodo_preferido,
+    score_metodo_preferido,
+    administra_metodo_preferido
+  ) %>%
+  pivot_longer(
+    cols = c(
+      facilidad_metodo_preferido,
+      score_metodo_preferido,
+      administra_metodo_preferido
+    ),
+    names_to = "indicador",
+    values_to = "valor"
+  ) %>%
+  mutate(
+    indicador = recode(
+      indicador,
+      facilidad_metodo_preferido = "Facilidad percibida",
+      score_metodo_preferido = "Pasos correctos",
+      administra_metodo_preferido = "Administra adrenalina"
+    ),
+    
+    tipo_indicador = case_when(
+      indicador == "Facilidad percibida" ~ "continuo",
+      indicador == "Pasos correctos" ~ "continuo",
+      indicador == "Administra adrenalina" ~ "binario"
+    )
+  )
+
+
+descriptivos_preferencia <- preferencia_indicadores_long %>%
+  group_by(q_preferencia_dic, indicador, tipo_indicador, video_grupo) %>%
+  summarise(
+    n = sum(!is.na(valor)),
+    
+    media = mean(valor, na.rm = TRUE),
+    sd = sd(valor, na.rm = TRUE),
+    
+    eventos = sum(valor == 1, na.rm = TRUE),
+    porcentaje = 100 * mean(valor == 1, na.rm = TRUE),
+    
+    .groups = "drop"
+  ) %>%
+  mutate(
+    resultado = case_when(
+      tipo_indicador == "continuo" & indicador == "Facilidad percibida" ~ paste0(
+        sprintf("%.1f", media),
+        " ± ",
+        sprintf("%.1f", sd)
+      ),
+      
+      tipo_indicador == "continuo" & indicador == "Pasos correctos" ~ paste0(
+        sprintf("%.1f", media),
+        " ± ",
+        sprintf("%.1f", sd),
+        "%"
+      ),
+      
+      tipo_indicador == "binario" ~ paste0(
+        eventos,
+        "/",
+        n,
+        " (",
+        sprintf("%.1f", porcentaje),
+        "%)"
+      )
+    )
+  ) %>%
+  mutate(
+    video_grupo_clean = case_when(
+      as.character(video_grupo) == "Reel" ~ "Reel",
+      as.character(video_grupo) == "Corto" ~ "Corto"
+    )
+  ) %>%
+  select(
+    q_preferencia_dic,
+    indicador,
+    tipo_indicador,
+    video_grupo_clean,
+    resultado
+  ) %>%
+  pivot_wider(
+    names_from = video_grupo_clean,
+    values_from = resultado
+  )
+
+descriptivos_preferencia
+
+
+calcular_estadistico_fila <- function(data_fila, key_fila) {
+  
+  tipo <- as.character(key_fila$tipo_indicador)
+  indicador_actual <- as.character(key_fila$indicador)
+  
+  
+  data_fila <- data_fila %>%
+    filter(!is.na(valor), !is.na(video_grupo))
+  
+  n_grupos <- n_distinct(data_fila$video_grupo)
+  
+  if (nrow(data_fila) == 0 || n_grupos < 2) {
+    return(
+      tibble(
+        diferencia = NA_real_,
+        ic95 = "",
+        p_valor = NA_real_,
+        p = ""
+      )
+    )
+  }
+  
+  
+  if (tipo == "continuo") {
+    
+    test <- tryCatch(
+      t.test(valor ~ video_grupo, data = data_fila),
+      error = function(e) NULL
+    )
+    
+    if (is.null(test)) {
+      return(
+        tibble(
+          diferencia = NA_real_,
+          ic95 = "",
+          p_valor = NA_real_,
+          p = ""
+        )
+      )
+    }
+    
+    # t.test devuelve las medias según el orden del factor.
+    # Como video_grupo está ordenado como Reel, Corto:
+    # estimate[1] = Reel
+    # estimate[2] = Corto
+    
+    diff <- unname(test$estimate[1] - test$estimate[2])
+    ci_low <- test$conf.int[1]
+    ci_high <- test$conf.int[2]
+    p_valor <- test$p.value
+    
+    suffix <- ifelse(indicador_actual == "Pasos correctos", "%", "")
+    
+    return(
+      tibble(
+        diferencia = diff,
+        ic95 = fmt_ic(ci_low, ci_high, suffix),
+        p_valor = p_valor,
+        p = fmt_p(p_valor)
+      )
+    )
+  }
+  
+ 
+  if (tipo == "binario") {
+    
+    tabla <- table(
+      data_fila$valor,
+      data_fila$video_grupo
+    )
+    
+    p_valor <- tryCatch(
+      fisher.test(tabla)$p.value,
+      error = function(e) NA_real_
+    )
+    
+    counts <- data_fila %>%
+      group_by(video_grupo) %>%
+      summarise(
+        n = sum(!is.na(valor)),
+        eventos = sum(valor == 1, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      complete(
+        video_grupo = factor(c("Reel", "Corto"), levels = c("Reel", "Corto")),
+        fill = list(n = 0, eventos = 0)
+      ) %>%
+      arrange(video_grupo)
+    
+    prop_test <- tryCatch(
+      prop.test(
+        x = counts$eventos,
+        n = counts$n,
+        correct = FALSE
+      ),
+      error = function(e) NULL
+    )
+    
+    if (is.null(prop_test)) {
+      return(
+        tibble(
+          diferencia = NA_real_,
+          ic95 = "",
+          p_valor = p_valor,
+          p = fmt_p(p_valor)
+        )
+      )
+    }
+    
+    diff <- 100 * unname(prop_test$estimate[1] - prop_test$estimate[2])
+    ci_low <- 100 * prop_test$conf.int[1]
+    ci_high <- 100 * prop_test$conf.int[2]
+    
+    return(
+      tibble(
+        diferencia = diff,
+        ic95 = fmt_ic(ci_low, ci_high, "%"),
+        p_valor = p_valor,
+        p = fmt_p(p_valor)
+      )
+    )
+  }
+  
+  
+  tibble(
+    diferencia = NA_real_,
+    ic95 = "",
+    p_valor = NA_real_,
+    p = ""
+  )
+}
+
+estadisticos_preferencia <- preferencia_indicadores_long %>%
+  filter(!is.na(valor), !is.na(video_grupo)) %>%
+  group_by(q_preferencia_dic, indicador, tipo_indicador) %>%
+  group_modify(~ calcular_estadistico_fila(.x, .y)) %>%
+  ungroup()
+
+estadisticos_preferencia
+
+
+tabla_preferencia_performance_limpia <- descriptivos_preferencia %>%
+  left_join(
+    estadisticos_preferencia,
+    by = c("q_preferencia_dic", "indicador", "tipo_indicador")
+  ) %>%
+  mutate(
+    diferencia_fmt = case_when(
+      indicador == "Facilidad percibida" ~ sprintf("%.1f", diferencia),
+      indicador == "Pasos correctos" ~ paste0(sprintf("%.1f", diferencia), "%"),
+      indicador == "Administra adrenalina" ~ paste0(sprintf("%.1f", diferencia), "%"),
+      TRUE ~ sprintf("%.1f", diferencia)
+    ),
+    
+    indicador = factor(
+      indicador,
+      levels = c(
+        "Facilidad percibida",
+        "Pasos correctos",
+        "Administra adrenalina"
+      )
+    )
+  ) %>%
+  arrange(q_preferencia_dic, indicador)
+
+tabla_preferencia_performance_limpia
+
+
+tabla_preferencia_performance_gt <- tabla_preferencia_performance_limpia %>%
+  select(
+    q_preferencia_dic,
+    indicador,
+    Reel,
+    Corto,
+    diferencia_fmt,
+    ic95,
+    p_valor,
+    p
+  ) %>%
+  gt(
+    groupname_col = "q_preferencia_dic"
+  ) %>%
+  cols_label(
+    indicador = "Indicador",
+    Reel = "Reel",
+    Corto = "Corto",
+    diferencia_fmt = "Diferencia",
+    ic95 = "IC95%",
+    p = "p"
+  ) %>%
+  cols_hide(
+    columns = p_valor
+  ) %>%
+  tab_header(
+    title = md("**Dispositivo preferido y rendimiento real con ese dispositivo**"),
+    subtitle = md("Comparación Reel vs Corto dentro de cada dispositivo preferido")
+  ) %>%
+  tab_spanner(
+    label = "Tipo de vídeo",
+    columns = c(Reel, Corto)
+  ) %>%
+  tab_spanner(
+    label = "Comparación Reel - Corto",
+    columns = c(diferencia_fmt, ic95, p)
+  ) %>%
+  tab_source_note(
+    source_note = md(
+      "Facilidad percibida: media ± DE en escala 1-5.  
+      Pasos correctos: media ± DE del porcentaje de pasos técnicos correctos.  
+      Administra adrenalina: n/N (%).  
+      La diferencia se expresa como Reel - Corto.  
+      Para facilidad y pasos correctos se usa t-test. Para administración de adrenalina se usa Fisher para p e IC95% aproximado de diferencia de proporciones."
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#F2F2F2"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      columns = p,
+      rows = p_valor < 0.05
+    )
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = indicador
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(Reel, Corto, diferencia_fmt, ic95, p)
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 11,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    row_group.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    data_row.padding = px(5),
+    source_notes.font.size = 9
+  )
+
+tabla_preferencia_performance_gt
+
+
+Sys.setenv(
+  CHROMOTE_CHROME = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+)
+
+
+gtsave(
+  tabla_preferencia_performance_gt,
+  filename = "tabla_preferencia_performance_limpia_p_ic.png",
+  expand = 10
+)
+```
+
+```{r}
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(scales)
+
+grafico_preferencia_resultados_data <- preferencia_indicadores_long %>%
+  filter(!is.na(valor), !is.na(video_grupo)) %>%
+  group_by(q_preferencia_dic, indicador, tipo_indicador, video_grupo) %>%
+  summarise(
+    n = n(),
+    media = mean(valor, na.rm = TRUE),
+    eventos = sum(valor == 1, na.rm = TRUE),
+    porcentaje = 100 * mean(valor == 1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    valor_plot = case_when(
+      indicador == "Facilidad percibida" ~ 100 * media / 5,
+      indicador == "Pasos correctos" ~ media,
+      indicador == "Administra adrenalina" ~ porcentaje
+    ),
+    
+    etiqueta_valor = case_when(
+      indicador == "Facilidad percibida" ~ paste0(sprintf("%.1f", media), "/5"),
+      indicador == "Pasos correctos" ~ paste0(sprintf("%.1f", media), "%"),
+      indicador == "Administra adrenalina" ~ paste0(
+        eventos,
+        "/",
+        n,
+        " (",
+        sprintf("%.1f", porcentaje),
+        "%)"
+      )
+    ),
+    
+    etiqueta_n = paste0("n=", n),
+    
+    indicador = factor(
+      indicador,
+      levels = c(
+        "Facilidad percibida",
+        "Pasos correctos",
+        "Administra adrenalina"
+      )
+    ),
+    
+    q_preferencia_dic = factor(
+      q_preferencia_dic,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    
+    video_grupo = factor(
+      video_grupo,
+      levels = c("Reel", "Corto")
+    )
+  )
+
+grafico_preferencia_resultados <- ggplot(
+  grafico_preferencia_resultados_data,
+  aes(
+    x = indicador,
+    y = valor_plot,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = etiqueta_valor),
+    position = position_dodge(width = 0.8),
+    vjust = -0.25,
+    size = 3.2
+  ) +
+  geom_text(
+    aes(
+      y = 5,
+      label = etiqueta_n
+    ),
+    position = position_dodge(width = 0.8),
+    size = 3,
+    color = "black"
+  ) +
+  facet_wrap(
+    ~ q_preferencia_dic,
+    nrow = 1
+  ) +
+  scale_y_continuous(
+    limits = c(0, 115),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Dispositivo preferido: percepción y rendimiento real",
+    subtitle = "Resultados según tipo de vídeo. La facilidad percibida se reescala visualmente a 0-100",
+    x = NULL,
+    y = "Escala visual 0-100",
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1)
+  )
+
+grafico_preferencia_resultados
+
+ggsave(
+  filename = "grafico_preferencia_resultados_metodo_preferido.png",
+  plot = grafico_preferencia_resultados,
+  width = 11,
+  height = 6,
+  dpi = 300
+)
+
+
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+grafico_diferencias_data <- tabla_preferencia_performance_limpia %>%
+  mutate(
+    indicador = as.character(indicador),
+    q_preferencia_dic = as.character(q_preferencia_dic),
+    
+    
+    ic95_limpio = str_remove_all(ic95, "%"),
+    ic_low = suppressWarnings(as.numeric(str_extract(ic95_limpio, "^-?\\d+\\.?\\d*"))),
+    ic_high = suppressWarnings(as.numeric(str_extract(ic95_limpio, "(?<= a )-?\\d+\\.?\\d*"))),
+    
+    indicador = factor(
+      indicador,
+      levels = c(
+        "Facilidad percibida",
+        "Pasos correctos",
+        "Administra adrenalina"
+      )
+    ),
+    
+    q_preferencia_dic = factor(
+      q_preferencia_dic,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    
+    etiqueta_p = case_when(
+      is.na(p_valor) ~ "",
+      p_valor < 0.001 ~ "p<0.001",
+      TRUE ~ paste0("p=", sprintf("%.3f", p_valor))
+    )
+  )
+
+grafico_diferencias <- ggplot(
+  grafico_diferencias_data,
+  aes(
+    x = diferencia,
+    y = indicador
+  )
+) +
+  geom_vline(
+    xintercept = 0,
+    linewidth = 0.7,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_errorbarh(
+    aes(
+      xmin = ic_low,
+      xmax = ic_high
+    ),
+    height = 0.18,
+    linewidth = 0.8
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  geom_text(
+    aes(
+      label = etiqueta_p
+    ),
+    nudge_y = 0.25,
+    size = 3.3
+  ) +
+  facet_wrap(
+    ~ q_preferencia_dic,
+    nrow = 1,
+    scales = "free_x"
+  ) +
+  labs(
+    title = "Diferencia entre Reel y Corto según dispositivo preferido",
+    subtitle = "Diferencia = Reel - Corto. Barras horizontales: IC95%",
+    x = "Diferencia Reel - Corto",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_diferencias
+
+ggsave(
+  filename = "grafico_diferencias_reel_corto_preferencia.png",
+  plot = grafico_diferencias,
+  width = 10,
+  height = 5.5,
+  dpi = 300
+)
+
+grafico_diferencias_color <- ggplot(
+  grafico_diferencias_data,
+  aes(
+    x = diferencia,
+    y = indicador,
+    color = diferencia > 0
+  )
+) +
+  geom_vline(
+    xintercept = 0,
+    linewidth = 0.7,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_errorbarh(
+    aes(
+      xmin = ic_low,
+      xmax = ic_high
+    ),
+    height = 0.18,
+    linewidth = 0.8
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  geom_text(
+    aes(label = etiqueta_p),
+    nudge_y = 0.25,
+    size = 3.3,
+    show.legend = FALSE
+  ) +
+  facet_wrap(
+    ~ q_preferencia_dic,
+    nrow = 1,
+    scales = "free_x"
+  ) +
+  scale_color_manual(
+    values = c(
+      "TRUE" = "#2C7FB8",
+      "FALSE" = "#D95F02"
+    ),
+    labels = c(
+      "FALSE" = "Mayor en Corto",
+      "TRUE" = "Mayor en Reel"
+    ),
+    name = "Dirección"
+  ) +
+  labs(
+    title = "Diferencia Reel - Corto según dispositivo preferido",
+    subtitle = "Puntos: diferencia; barras: IC95%",
+    x = "Diferencia Reel - Corto",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.minor = element_blank()
+  )
+
+grafico_diferencias_color
+
+ggsave(
+  filename = "grafico_diferencias_reel_corto_preferencia_color.png",
+  plot = grafico_diferencias_color,
+  width = 10,
+  height = 5.5,
+  dpi = 300
+)
+
+
+```
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(gt)
+library(stringr)
+
+
+fmt_p <- function(p) {
+  case_when(
+    is.na(p) ~ "",
+    p < 0.001 ~ "<0.001",
+    TRUE ~ sprintf("%.3f", p)
+  )
+}
+
+fmt_ic <- function(low, high, suffix = "") {
+  ifelse(
+    is.na(low) | is.na(high),
+    "",
+    paste0(
+      sprintf("%.1f", low),
+      " a ",
+      sprintf("%.1f", high),
+      suffix
+    )
+  )
+}
+
+fmt_media_sd_mediana <- function(x, suffix = "") {
+  paste0(
+    sprintf("%.1f", mean(x, na.rm = TRUE)),
+    " ± ",
+    sprintf("%.1f", sd(x, na.rm = TRUE)),
+    suffix,
+    "\n",
+    sprintf("%.1f", median(x, na.rm = TRUE)),
+    " [",
+    sprintf("%.1f", quantile(x, 0.25, na.rm = TRUE)),
+    "-",
+    sprintf("%.1f", quantile(x, 0.75, na.rm = TRUE)),
+    "]",
+    suffix
+  )
+}
+
+fmt_n_pct <- function(x) {
+  n_total <- sum(!is.na(x))
+  n_evento <- sum(x == 1, na.rm = TRUE)
+  pct <- 100 * n_evento / n_total
+  
+  paste0(
+    n_evento,
+    "/",
+    n_total,
+    " (",
+    sprintf("%.1f", pct),
+    "%)"
+  )
+}
+
+
+vars_spray <- c(
+  "sp_coge_ok",
+  "sp_prueba",
+  "sp_punta",
+  "sp_dedos",
+  "sp_pulgar",
+  "sp_efectivo",
+  "sp_112"
+)
+
+vars_autoinyector <- c(
+  "au_tapa",
+  "au_puno",
+  "au_encara",
+  "au_press",
+  "au_muslo",
+  "au_10seg",
+  "au_masaje",
+  "au_efectivo",
+  "au_112"
+)
+
+df_global <- df_cuestionario %>%
+  mutate(
+    across(
+      c(all_of(vars_spray), all_of(vars_autoinyector)),
+      ~ suppressWarnings(as.numeric(.x))
+    ),
+    
+    spray_score = rowSums(across(all_of(vars_spray)), na.rm = TRUE),
+    autoinyector_score = rowSums(across(all_of(vars_autoinyector)), na.rm = TRUE),
+    
+    spray_score_pct = 100 * spray_score / length(vars_spray),
+    autoinyector_score_pct = 100 * autoinyector_score / length(vars_autoinyector),
+    
+    sp_efectivo = as.numeric(sp_efectivo),
+    au_efectivo = as.numeric(au_efectivo)
+  )
+
+
+test_facilidad <- t.test(
+  df_global$q_spray_facil,
+  df_global$q_auto_facil,
+  paired = TRUE
+)
+
+test_score <- t.test(
+  df_global$spray_score_pct,
+  df_global$autoinyector_score_pct,
+  paired = TRUE
+)
+
+tabla_admin <- table(
+  Spray = df_global$sp_efectivo,
+  Autoinyector = df_global$au_efectivo
+)
+
+test_admin <- mcnemar.test(tabla_admin, correct = TRUE)
+
+
+diff_facilidad <- mean(
+  df_global$q_spray_facil - df_global$q_auto_facil,
+  na.rm = TRUE
+)
+
+diff_score <- mean(
+  df_global$spray_score_pct - df_global$autoinyector_score_pct,
+  na.rm = TRUE
+)
+
+diff_admin <- 100 * (
+  mean(df_global$sp_efectivo == 1, na.rm = TRUE) -
+    mean(df_global$au_efectivo == 1, na.rm = TRUE)
+)
+
+set.seed(123)
+
+boot_diff_admin <- replicate(
+  5000,
+  {
+    idx <- sample(seq_len(nrow(df_global)), replace = TRUE)
+    d <- df_global[idx, ]
+    
+    100 * (
+      mean(d$sp_efectivo == 1, na.rm = TRUE) -
+        mean(d$au_efectivo == 1, na.rm = TRUE)
+    )
+  }
+)
+
+ic_admin <- quantile(
+  boot_diff_admin,
+  probs = c(0.025, 0.975),
+  na.rm = TRUE
+)
+
+
+preferencia_dic <- df_global %>%
+  filter(!is.na(q_preferencia_dic))
+
+n_pref_spray <- sum(preferencia_dic$q_preferencia_dic == "Spray nasal")
+n_pref_auto <- sum(preferencia_dic$q_preferencia_dic == "Autoinyector")
+n_pref_total <- n_pref_spray + n_pref_auto
+
+test_preferencia <- binom.test(
+  x = n_pref_spray,
+  n = n_pref_total,
+  p = 0.5
+)
+
+diff_preferencia <- 100 * (
+  n_pref_spray / n_pref_total -
+    n_pref_auto / n_pref_total
+)
+
+ic_preferencia <- 100 * (
+  2 * test_preferencia$conf.int - 1
+)
+
+
+orden_indicadores <- c(
+  "Facilidad percibida tras ver el vídeo",
+  "Preferencia en emergencia real tras ver el vídeo",
+  "Pasos técnicos correctos",
+  "Administra adrenalina"
+)
+
+tabla_global_dispositivo <- tibble(
+  indicador = c(
+    "Facilidad percibida tras ver el vídeo",
+    "Preferencia en emergencia real tras ver el vídeo",
+    "Pasos técnicos correctos",
+    "Administra adrenalina"
+  ),
+  
+  spray = c(
+    fmt_media_sd_mediana(df_global$q_spray_facil),
+    paste0(
+      n_pref_spray,
+      "/",
+      n_pref_total,
+      " (",
+      sprintf("%.1f", 100 * n_pref_spray / n_pref_total),
+      "%)"
+    ),
+    fmt_media_sd_mediana(df_global$spray_score_pct, suffix = "%"),
+    fmt_n_pct(df_global$sp_efectivo)
+  ),
+  
+  autoinyector = c(
+    fmt_media_sd_mediana(df_global$q_auto_facil),
+    paste0(
+      n_pref_auto,
+      "/",
+      n_pref_total,
+      " (",
+      sprintf("%.1f", 100 * n_pref_auto / n_pref_total),
+      "%)"
+    ),
+    fmt_media_sd_mediana(df_global$autoinyector_score_pct, suffix = "%"),
+    fmt_n_pct(df_global$au_efectivo)
+  ),
+  
+  diferencia = c(
+    sprintf("%.1f", diff_facilidad),
+    paste0(sprintf("%.1f", diff_preferencia), "%"),
+    paste0(sprintf("%.1f", diff_score), "%"),
+    paste0(sprintf("%.1f", diff_admin), "%")
+  ),
+  
+  ic95 = c(
+    fmt_ic(
+      test_facilidad$conf.int[1],
+      test_facilidad$conf.int[2]
+    ),
+    fmt_ic(
+      ic_preferencia[1],
+      ic_preferencia[2],
+      suffix = "%"
+    ),
+    fmt_ic(
+      test_score$conf.int[1],
+      test_score$conf.int[2],
+      suffix = "%"
+    ),
+    fmt_ic(
+      ic_admin[1],
+      ic_admin[2],
+      suffix = "%"
+    )
+  ),
+  
+  p = c(
+    fmt_p(test_facilidad$p.value),
+    fmt_p(test_preferencia$p.value),
+    fmt_p(test_score$p.value),
+    fmt_p(test_admin$p.value)
+  )
+) %>%
+  mutate(
+    indicador = factor(
+      indicador,
+      levels = orden_indicadores
+    )
+  ) %>%
+  arrange(indicador)
+
+
+tabla_global_dispositivo_gt <- tabla_global_dispositivo %>%
+  gt() %>%
+  cols_label(
+    indicador = "Indicador",
+    spray = "Spray nasal",
+    autoinyector = "Autoinyector",
+    diferencia = "Diferencia",
+    ic95 = "IC95%",
+    p = "p"
+  ) %>%
+  tab_header(
+    title = md("**Comparación global entre spray nasal y autoinyector**"),
+    subtitle = md("Percepción, preferencia, rendimiento real y administración efectiva")
+  ) %>%
+  tab_spanner(
+    label = "Dispositivo",
+    columns = c(spray, autoinyector)
+  ) %>%
+  tab_spanner(
+    label = "Comparación Spray - Autoinyector",
+    columns = c(diferencia, ic95, p)
+  ) %>%
+  tab_source_note(
+    source_note = md(
+      "Facilidad percibida: media ± DE y mediana [IQR], escala 1-5.  
+      Preferencia en emergencia real: solo respuestas dicotómicas Spray nasal vs Autoinyector.  
+      Pasos técnicos correctos: media ± DE y mediana [IQR], expresado en porcentaje.  
+      Administra adrenalina: n/N (%).  
+      La diferencia se expresa como Spray - Autoinyector."
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      columns = p,
+      rows = p %in% c("<0.001") | suppressWarnings(as.numeric(p)) < 0.05
+    )
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = indicador
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(spray, autoinyector, diferencia, ic95, p)
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 12,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    data_row.padding = px(6),
+    source_notes.font.size = 9
+  )
+
+tabla_global_dispositivo_gt
+
+Sys.setenv(
+  CHROMOTE_CHROME = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+)
+
+gtsave(
+  tabla_global_dispositivo_gt,
+  filename = "tabla_global_spray_vs_autoinyector.png",
+  expand = 10
+)
+```
+```{r}
+grafico_global_dispositivo_data <- tibble(
+  indicador = c(
+    "Facilidad percibida tras ver el vídeo",
+    "Preferencia en emergencia real tras ver el vídeo",
+    "Pasos técnicos correctos",
+    "Administra adrenalina"
+  ),
+  
+  spray_valor = c(
+    mean(df_global$q_spray_facil, na.rm = TRUE) * 100 / 5,
+    100 * n_pref_spray / n_pref_total,
+    mean(df_global$spray_score_pct, na.rm = TRUE),
+    100 * mean(df_global$sp_efectivo == 1, na.rm = TRUE)
+  ),
+  
+  autoinyector_valor = c(
+    mean(df_global$q_auto_facil, na.rm = TRUE) * 100 / 5,
+    100 * n_pref_auto / n_pref_total,
+    mean(df_global$autoinyector_score_pct, na.rm = TRUE),
+    100 * mean(df_global$au_efectivo == 1, na.rm = TRUE)
+  ),
+  
+  spray_label = c(
+    paste0(sprintf("%.1f", mean(df_global$q_spray_facil, na.rm = TRUE)), "/5"),
+    paste0(
+      n_pref_spray,
+      "/",
+      n_pref_total,
+      " (",
+      sprintf("%.1f", 100 * n_pref_spray / n_pref_total),
+      "%)"
+    ),
+    paste0(sprintf("%.1f", mean(df_global$spray_score_pct, na.rm = TRUE)), "%"),
+    paste0(
+      sum(df_global$sp_efectivo == 1, na.rm = TRUE),
+      "/",
+      sum(!is.na(df_global$sp_efectivo)),
+      " (",
+      sprintf("%.1f", 100 * mean(df_global$sp_efectivo == 1, na.rm = TRUE)),
+      "%)"
+    )
+  ),
+  
+  autoinyector_label = c(
+    paste0(sprintf("%.1f", mean(df_global$q_auto_facil, na.rm = TRUE)), "/5"),
+    paste0(
+      n_pref_auto,
+      "/",
+      n_pref_total,
+      " (",
+      sprintf("%.1f", 100 * n_pref_auto / n_pref_total),
+      "%)"
+    ),
+    paste0(sprintf("%.1f", mean(df_global$autoinyector_score_pct, na.rm = TRUE)), "%"),
+    paste0(
+      sum(df_global$au_efectivo == 1, na.rm = TRUE),
+      "/",
+      sum(!is.na(df_global$au_efectivo)),
+      " (",
+      sprintf("%.1f", 100 * mean(df_global$au_efectivo == 1, na.rm = TRUE)),
+      "%)"
+    )
+  )
+) %>%
+  pivot_longer(
+    cols = c(spray_valor, autoinyector_valor),
+    names_to = "dispositivo",
+    values_to = "valor"
+  ) %>%
+  mutate(
+    etiqueta = case_when(
+      dispositivo == "spray_valor" ~ spray_label,
+      dispositivo == "autoinyector_valor" ~ autoinyector_label
+    ),
+    dispositivo = recode(
+      dispositivo,
+      spray_valor = "Spray nasal",
+      autoinyector_valor = "Autoinyector"
+    ),
+    dispositivo = factor(
+      dispositivo,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    indicador = factor(
+      indicador,
+      levels = orden_indicadores
+    )
+  )
+
+
+
+grafico_global_dispositivo_horizontal <- ggplot(
+  grafico_global_dispositivo_data,
+  aes(
+    x = valor,
+    y = indicador,
+    fill = dispositivo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    position = position_dodge(width = 0.8),
+    hjust = -0.05,
+    size = 3.3
+  ) +
+  scale_x_continuous(
+    limits = c(0, 115),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Comparación global entre spray nasal y autoinyector",
+    subtitle = "La facilidad percibida se reescala visualmente a 0-100",
+    x = "Escala visual 0-100",
+    y = NULL,
+    fill = "Dispositivo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_global_dispositivo_horizontal
+
+ggsave(
+  filename = "grafico_global_spray_vs_autoinyector_horizontal.png",
+  plot = grafico_global_dispositivo_horizontal,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+```{r}
+library(forcats)
+
+grafico_global_dispositivo_data <- grafico_global_dispositivo_data %>%
+  mutate(
+    indicador = factor(
+      indicador,
+      levels = orden_indicadores
+    ),
+    indicador = fct_rev(indicador)
+  )
+
+grafico_global_dispositivo_horizontal <- ggplot(
+  grafico_global_dispositivo_data,
+  aes(
+    x = valor,
+    y = indicador,
+    fill = dispositivo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    position = position_dodge(width = 0.8),
+    hjust = -0.05,
+    size = 3.3
+  ) +
+  scale_x_continuous(
+    limits = c(0, 115),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Comparación global entre spray nasal y autoinyector",
+    subtitle = "La facilidad percibida se reescala visualmente a 0-100",
+    x = "Escala visual 0-100",
+    y = NULL,
+    fill = "Dispositivo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_global_dispositivo_horizontal
+
+ggsave(
+  filename = "grafico_global_spray_vs_autoinyector_horizontal.png",
+  plot = grafico_global_dispositivo_horizontal,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(stringi)
+library(forcats)
+library(ggplot2)
+library(gt)
+library(scales)
+
+
+
+col_q15_impresion_spray <- names(df)[
+  str_detect(names(df), "^x15_") |
+    str_detect(names(df), "primera.*impresion.*spray")
+][1]
+
+col_q16_auto_facil <- names(df)[
+  str_detect(names(df), "^x16_") |
+    str_detect(names(df), "autoinyector.*facil.*riesgo")
+][1]
+
+col_q17_spray_facil <- names(df)[
+  str_detect(names(df), "^x17_") |
+    str_detect(names(df), "spray.*facil.*riesgo")
+][1]
+
+col_q18_preferencia <- names(df)[
+  str_detect(names(df), "^x18_") |
+    str_detect(names(df), "emergencia.*ambos.*dispositivos")
+][1]
+
+col_q19_motivos <- names(df)[
+  str_detect(names(df), "^x19_") |
+    str_detect(names(df), "por_que") |
+    str_detect(names(df), "porque")
+][1]
+
+col_q20_atencion <- names(df)[
+  str_detect(names(df), "^x20_") |
+    str_detect(names(df), "atencion.*completa")
+][1]
+
+col_q21_duracion <- names(df)[
+  str_detect(names(df), "^x21_") |
+    str_detect(names(df), "duracion.*adecuada")
+][1]
+
+col_q22_seguridad <- names(df)[
+  str_detect(names(df), "^x22_") |
+    str_detect(names(df), "seguro.*capaz") |
+    str_detect(names(df), "administrar.*adrenalina.*emergencia")
+][1]
+
+
+cols_autopercepcion <- c(
+  col_q15_impresion_spray = col_q15_impresion_spray,
+  col_q16_auto_facil = col_q16_auto_facil,
+  col_q17_spray_facil = col_q17_spray_facil,
+  col_q18_preferencia = col_q18_preferencia,
+  col_q19_motivos = col_q19_motivos,
+  col_q20_atencion = col_q20_atencion,
+  col_q21_duracion = col_q21_duracion,
+  col_q22_seguridad = col_q22_seguridad
+)
+
+cols_autopercepcion
+
+
+df_autopercepcion <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto")),
+    
+    q15_impresion_spray_original = as.character(.data[[col_q15_impresion_spray]]),
+    q16_auto_facil = suppressWarnings(as.numeric(.data[[col_q16_auto_facil]])),
+    q17_spray_facil = suppressWarnings(as.numeric(.data[[col_q17_spray_facil]])),
+    q18_preferencia_original = as.character(.data[[col_q18_preferencia]]),
+    q19_motivos_original = as.character(.data[[col_q19_motivos]]),
+    q20_atencion = suppressWarnings(as.numeric(.data[[col_q20_atencion]])),
+    q21_duracion = suppressWarnings(as.numeric(.data[[col_q21_duracion]])),
+    q22_seguridad = suppressWarnings(as.numeric(.data[[col_q22_seguridad]]))
+  ) %>%
+  mutate(
+    q15_impresion_spray_limpia = q15_impresion_spray_original %>%
+      str_squish(),
+    
+    q15_impresion_spray_limpia = if_else(
+      is.na(q15_impresion_spray_limpia) | q15_impresion_spray_limpia == "",
+      "No responde",
+      q15_impresion_spray_limpia
+    ),
+    
+    q18_preferencia_limpia = q18_preferencia_original %>%
+      str_to_lower() %>%
+      stringi::stri_trans_general("Latin-ASCII") %>%
+      str_squish(),
+    
+    q18_preferencia = case_when(
+      str_detect(q18_preferencia_limpia, "spray") &
+        !str_detect(q18_preferencia_limpia, "autoinyector") ~ "Spray nasal",
+      
+      str_detect(q18_preferencia_limpia, "autoinyector") &
+        !str_detect(q18_preferencia_limpia, "spray") &
+        !str_detect(q18_preferencia_limpia, "indiferente") ~ "Autoinyector",
+      
+      str_detect(q18_preferencia_limpia, "indiferente") ~ "Indiferente",
+      
+      str_detect(q18_preferencia_limpia, "spray") &
+        str_detect(q18_preferencia_limpia, "autoinyector") ~ "Respuesta múltiple",
+      
+      is.na(q18_preferencia_original) | q18_preferencia_original == "" ~ "No responde",
+      
+      TRUE ~ "Otra / no clara"
+    ),
+    
+    q18_preferencia = factor(
+      q18_preferencia,
+      levels = c(
+        "Spray nasal",
+        "Autoinyector",
+        "Indiferente",
+        "Respuesta múltiple",
+        "Otra / no clara",
+        "No responde"
+      )
+    )
+  )
+
+
+names(df_autopercepcion)
+
+table(df_autopercepcion$q15_impresion_spray_limpia, useNA = "ifany")
+table(df_autopercepcion$q18_preferencia, useNA = "ifany")
+
+summary(df_autopercepcion$q16_auto_facil)
+summary(df_autopercepcion$q17_spray_facil)
+summary(df_autopercepcion$q20_atencion)
+summary(df_autopercepcion$q21_duracion)
+summary(df_autopercepcion$q22_seguridad)
+
+
+cat_long <- df_autopercepcion %>%
+  select(
+    video_grupo,
+    q15_impresion_spray_limpia,
+    q18_preferencia
+  ) %>%
+  pivot_longer(
+    cols = c(q15_impresion_spray_limpia, q18_preferencia),
+    names_to = "variable",
+    values_to = "respuesta"
+  ) %>%
+  mutate(
+    variable = recode(
+      variable,
+      q15_impresion_spray_limpia = "Primera impresión sobre el spray nasal",
+      q18_preferencia = "Preferencia en emergencia real"
+    ),
+    respuesta = as.character(respuesta),
+    respuesta = if_else(is.na(respuesta) | respuesta == "", "No responde", respuesta)
+  )
+
+tabla_cat_total <- cat_long %>%
+  count(variable, respuesta, name = "n") %>%
+  group_by(variable) %>%
+  mutate(
+    grupo = "Total",
+    porcentaje = 100 * n / sum(n),
+    resultado = paste0(n, " (", sprintf("%.1f", porcentaje), "%)")
+  ) %>%
+  ungroup()
+
+tabla_cat_video <- cat_long %>%
+  count(variable, video_grupo, respuesta, name = "n") %>%
+  group_by(variable, video_grupo) %>%
+  mutate(
+    grupo = as.character(video_grupo),
+    porcentaje = 100 * n / sum(n),
+    resultado = paste0(n, " (", sprintf("%.1f", porcentaje), "%)")
+  ) %>%
+  ungroup()
+
+tabla_cat_publicacion <- bind_rows(
+  tabla_cat_total,
+  tabla_cat_video
+) %>%
+  mutate(
+    grupo = case_when(
+      grupo == "Corto" ~ "Corto",
+      TRUE ~ grupo
+    )
+  ) %>%
+  select(variable, respuesta, grupo, resultado) %>%
+  pivot_wider(
+    names_from = grupo,
+    values_from = resultado,
+    values_fill = "0 (0.0%)"
+  ) %>%
+  arrange(variable, respuesta)
+
+tabla_cat_publicacion
+
+tabla_cat_gt <- tabla_cat_publicacion %>%
+  gt(groupname_col = "variable") %>%
+  cols_label(
+    respuesta = "Respuesta",
+    Total = "Total",
+    Reel = "Reel",
+    Corto = "Corto"
+  ) %>%
+  tab_header(
+    title = md("**Variables categóricas de autopercepción**"),
+    subtitle = md("Primera impresión sobre el spray nasal y preferencia en emergencia real")
+  ) %>%
+  tab_spanner(
+    label = "Tipo de vídeo",
+    columns = c(Reel, Corto)
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#F2F2F2"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = respuesta
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(Total, Reel, Corto)
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 11,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    row_group.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    data_row.padding = px(6)
+  )
+
+tabla_cat_gt
+
+gtsave(
+  tabla_cat_gt,
+  filename = "tabla_autopercepcion_categoricas.png",
+  expand = 10
+)
+```
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(scales)
+
+grafico_likert_heatmap_data <- likert_long %>%
+  filter(!is.na(valor), !is.na(video_grupo)) %>%
+  group_by(etiqueta, video_grupo) %>%
+  summarise(
+    n = n(),
+    media = mean(valor, na.rm = TRUE),
+    mediana = median(valor, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    etiqueta = fct_rev(factor(etiqueta, levels = diccionario_likert$etiqueta)),
+    label = paste0(sprintf("%.1f", media), "\n", "n=", n)
+  )
+
+grafico_likert_heatmap <- ggplot(
+  grafico_likert_heatmap_data,
+  aes(
+    x = video_grupo,
+    y = etiqueta,
+    fill = media
+  )
+) +
+  geom_tile(
+    color = "white",
+    linewidth = 0.8
+  ) +
+  geom_text(
+    aes(label = label),
+    size = 3.8,
+    color = "black"
+  ) +
+  scale_fill_gradient(
+    low = "#F7FBFF",
+    high = "#2C7FB8",
+    limits = c(1, 5),
+    breaks = 1:5,
+    name = "Media"
+  ) +
+  labs(
+    title = "Autopercepción tras ver el vídeo",
+    subtitle = "Puntuación media en escala 1-5",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 10),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+
+grafico_likert_heatmap
+
+ggsave(
+  filename = "grafico_autopercepcion_heatmap_likert.png",
+  plot = grafico_likert_heatmap,
+  width = 10,
+  height = 5.8,
+  dpi = 300
+)
+
+
+grafico_likert_dot_data <- likert_long %>%
+  filter(!is.na(valor), !is.na(video_grupo)) %>%
+  group_by(etiqueta, video_grupo) %>%
+  summarise(
+    n = n(),
+    media = mean(valor, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    etiqueta = fct_rev(factor(etiqueta, levels = diccionario_likert$etiqueta)),
+    label = sprintf("%.1f", media)
+  )
+
+grafico_likert_dot <- ggplot(
+  grafico_likert_dot_data,
+  aes(
+    x = media,
+    y = etiqueta,
+    color = video_grupo
+  )
+) +
+  geom_point(
+    size = 4,
+    position = position_dodge(width = 0.55)
+  ) +
+  geom_text(
+    aes(label = label),
+    position = position_dodge(width = 0.55),
+    hjust = -0.6,
+    size = 3.4,
+    show.legend = FALSE
+  ) +
+  scale_color_manual(
+    values = c(
+      "Reel" = "#2C7FB8",
+      "Corto" = "#D95F02"
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(1, 5.35),
+    breaks = 1:5
+  ) +
+  labs(
+    title = "Autopercepción tras ver el vídeo",
+    subtitle = "Media en escala 1-5",
+    x = "Puntuación media",
+    y = NULL,
+    color = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_likert_dot
+
+ggsave(
+  filename = "grafico_autopercepcion_dotplot_likert.png",
+  plot = grafico_likert_dot,
+  width = 10,
+  height = 5.8,
+  dpi = 300
+)
+
+
+likert_distribucion <- likert_long %>%
+  filter(!is.na(valor), !is.na(video_grupo)) %>%
+  mutate(
+    valor = factor(valor, levels = 1:5),
+    etiqueta = factor(etiqueta, levels = diccionario_likert$etiqueta)
+  ) %>%
+  count(etiqueta, video_grupo, valor) %>%
+  group_by(etiqueta, video_grupo) %>%
+  mutate(
+    porcentaje = 100 * n / sum(n),
+    etiqueta_pct = if_else(porcentaje >= 8, paste0(round(porcentaje), "%"), "")
+  ) %>%
+  ungroup() %>%
+  mutate(
+    etiqueta = fct_rev(etiqueta)
+  )
+
+grafico_likert_distribucion <- ggplot(
+  likert_distribucion,
+  aes(
+    x = porcentaje,
+    y = interaction(video_grupo, etiqueta, sep = " · "),
+    fill = valor
+  )
+) +
+  geom_col(
+    width = 0.75,
+    color = "white",
+    linewidth = 0.3
+  ) +
+  geom_text(
+    aes(label = etiqueta_pct),
+    position = position_stack(vjust = 0.5),
+    size = 3,
+    color = "black"
+  ) +
+  scale_fill_manual(
+  values = c(
+    "1" = "#D73027",
+    "2" = "#FC8D59",
+    "3" = "#FEE08B",
+    "4" = "#91BFDB",
+    "5" = "#4575B4"
+  ),
+  breaks = c("5", "4", "3", "2", "1"),
+  labels = c(
+    "5",
+    "4",
+    "3",
+    "2",
+    "1"
+  ),
+  name = "Puntuación"
+) +
+  scale_x_continuous(
+    limits = c(0, 100),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  scale_y_discrete(
+    labels = function(x) {
+      x <- stringr::str_replace(x, "Reel · ", "Reel | ")
+      x <- stringr::str_replace(x, "Corto · ", "Corto | ")
+      x
+    }
+  ) +
+  labs(
+    title = "Distribución de respuestas de autopercepción",
+    subtitle = "Escala 1-5; 5 = mayor acuerdo/facilidad/seguridad",
+    x = "Distribución porcentual",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_likert_distribucion
+
+ggsave(
+  filename = "grafico_autopercepcion_distribucion_likert.png",
+  plot = grafico_likert_distribucion,
+  width = 11,
+  height = 7.5,
+  dpi = 300
+)
+
+
+cat_plot_data <- cat_long %>%
+  filter(!is.na(video_grupo)) %>%
+  count(variable, video_grupo, respuesta) %>%
+  group_by(variable, video_grupo) %>%
+  mutate(
+    porcentaje = 100 * n / sum(n),
+    label = paste0(n, " (", sprintf("%.1f", porcentaje), "%)")
+  ) %>%
+  ungroup() %>%
+  mutate(
+    respuesta = fct_reorder(respuesta, porcentaje, .fun = max),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto"))
+  )
+
+grafico_cat_autopercepcion <- ggplot(
+  cat_plot_data,
+  aes(
+    x = porcentaje,
+    y = respuesta,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = label),
+    position = position_dodge(width = 0.8),
+    hjust = -0.05,
+    size = 3.1
+  ) +
+  facet_wrap(
+    ~ variable,
+    scales = "free_y",
+    ncol = 1
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Reel" = "#2C7FB8",
+      "Corto" = "#D95F02"
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(0, 115),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Variables categóricas de autopercepción",
+    subtitle = "Primera impresión sobre el spray nasal y preferencia en emergencia real",
+    x = "Porcentaje",
+    y = NULL,
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_cat_autopercepcion
+
+ggsave(
+  filename = "grafico_autopercepcion_categoricas_barras.png",
+  plot = grafico_cat_autopercepcion,
+  width = 11,
+  height = 8,
+  dpi = 300
+)
+
+
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+library(forcats)
+library(scales)
+
+
+to_seconds <- function(x) {
+  
+  if (inherits(x, "hms") || inherits(x, "difftime")) {
+    return(as.numeric(x, units = "secs"))
+  }
+  
+  if (inherits(x, "POSIXct") || inherits(x, "POSIXt")) {
+    return(
+      lubridate::hour(x) * 3600 +
+        lubridate::minute(x) * 60 +
+        lubridate::second(x)
+    )
+  }
+  
+  x_chr <- stringr::str_trim(as.character(x))
+  x_chr[x_chr %in% c(".", "", "NA", "NaN", "NULL", "null")] <- NA_character_
+  
+  out <- suppressWarnings(as.numeric(x_chr))
+  
+  idx_excel <- !is.na(out) & out > 0 & out < 1
+  out[idx_excel] <- out[idx_excel] * 86400
+  
+  is_hms <- stringr::str_detect(
+    x_chr,
+    "^\\d{1,2}:\\d{2}:\\d{2}(\\.\\d+)?$"
+  )
+  
+  is_hms[is.na(is_hms)] <- FALSE
+  
+  if (any(is_hms)) {
+    out[is_hms] <- suppressWarnings(
+      lubridate::period_to_seconds(lubridate::hms(x_chr[is_hms]))
+    )
+  }
+  
+  as.numeric(out)
+}
+
+
+df_tiempos_timeline <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto")),
+    
+    sp_tiempo_medicacion_s = to_seconds(sp_tiempo_medicacion),
+    sp_tiempo112_s         = to_seconds(sp_tiempo112),
+    au_tiempo_medicacion_s = to_seconds(au_tiempo_medicacion),
+    au_tiempo112_s         = to_seconds(au_tiempo112)
+  )
+
+
+timeline_long <- df_tiempos_timeline %>%
+  select(
+    id,
+    video_grupo,
+    sp_tiempo_medicacion_s,
+    sp_tiempo112_s,
+    au_tiempo_medicacion_s,
+    au_tiempo112_s
+  ) %>%
+  pivot_longer(
+    cols = c(
+      sp_tiempo_medicacion_s,
+      sp_tiempo112_s,
+      au_tiempo_medicacion_s,
+      au_tiempo112_s
+    ),
+    names_to = "variable",
+    values_to = "tiempo_s"
+  ) %>%
+  mutate(
+    dispositivo = case_when(
+      str_starts(variable, "sp_") ~ "Spray nasal",
+      str_starts(variable, "au_") ~ "Autoinyector"
+    ),
+    evento = case_when(
+      str_detect(variable, "tiempo_medicacion") ~ "Administra adrenalina",
+      str_detect(variable, "tiempo112") ~ "Llama al 112"
+    ),
+    dispositivo = factor(
+      dispositivo,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    evento = factor(
+      evento,
+      levels = c("Administra adrenalina", "Llama al 112")
+    )
+  ) %>%
+  filter(!is.na(tiempo_s), !is.na(video_grupo), !is.na(dispositivo), !is.na(evento))
+
+
+timeline_resumen <- timeline_long %>%
+  group_by(dispositivo, video_grupo, evento) %>%
+  summarise(
+    n = n(),
+    mediana = median(tiempo_s, na.rm = TRUE),
+    media = mean(tiempo_s, na.rm = TRUE),
+    sd = sd(tiempo_s, na.rm = TRUE),
+    q1 = quantile(tiempo_s, 0.25, na.rm = TRUE),
+    q3 = quantile(tiempo_s, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    grupo_timeline = paste(dispositivo, video_grupo, sep = " · "),
+    grupo_timeline = factor(
+      grupo_timeline,
+      levels = c(
+        "Spray nasal · Reel",
+        "Spray nasal · Corto",
+        "Autoinyector · Reel",
+        "Autoinyector · Corto"
+      )
+    ),
+    etiqueta = paste0(sprintf("%.1f", mediana), " s")
+  )
+
+timeline_resumen
+
+
+grafico_timeline_mediana <- ggplot(
+  timeline_resumen,
+  aes(
+    x = mediana,
+    y = fct_rev(grupo_timeline),
+    color = evento
+  )
+) +
+  geom_line(
+    aes(group = grupo_timeline),
+    color = "grey65",
+    linewidth = 1
+  ) +
+  geom_point(
+    size = 4
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    hjust = -0.25,
+    size = 3.4,
+    show.legend = FALSE
+  ) +
+  scale_color_manual(
+    values = c(
+      "Administra adrenalina" = "#2C7FB8",
+      "Llama al 112" = "#D95F02"
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(0, max(timeline_resumen$mediana, na.rm = TRUE) * 1.25),
+    breaks = pretty_breaks(n = 6),
+    labels = function(x) paste0(x, " s")
+  ) +
+  labs(
+    title = "Línea temporal de actuación",
+    subtitle = "Tiempo mediano hasta administrar adrenalina y llamar al 112",
+    x = "Tiempo desde el inicio de la simulación",
+    y = NULL,
+    color = "Evento"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_timeline_mediana
+
+ggsave(
+  filename = "grafico_timeline_mediana_adrenalina_112.png",
+  plot = grafico_timeline_mediana,
+  width = 10,
+  height = 5.8,
+  dpi = 300
+)
+
+
+grafico_timeline_mediana_iqr <- ggplot(
+  timeline_resumen,
+  aes(
+    x = mediana,
+    y = fct_rev(grupo_timeline),
+    color = evento
+  )
+) +
+  geom_segment(
+    aes(
+      x = q1,
+      xend = q3,
+      y = fct_rev(grupo_timeline),
+      yend = fct_rev(grupo_timeline)
+    ),
+    linewidth = 2,
+    alpha = 0.35
+  ) +
+  geom_line(
+    aes(group = grupo_timeline),
+    color = "grey70",
+    linewidth = 0.8,
+    inherit.aes = TRUE
+  ) +
+  geom_point(
+    size = 4
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    hjust = -0.25,
+    size = 3.4,
+    show.legend = FALSE
+  ) +
+  scale_color_manual(
+    values = c(
+      "Administra adrenalina" = "#2C7FB8",
+      "Llama al 112" = "#D95F02"
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(0, max(timeline_resumen$q3, na.rm = TRUE) * 1.25),
+    breaks = pretty_breaks(n = 6),
+    labels = function(x) paste0(x, " s")
+  ) +
+  labs(
+    title = "Línea temporal de actuación",
+    subtitle = "Puntos: mediana; barras horizontales: rango intercuartílico",
+    x = "Tiempo desde el inicio de la simulación",
+    y = NULL,
+    color = "Evento"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_timeline_mediana_iqr
+
+ggsave(
+  filename = "grafico_timeline_mediana_iqr_adrenalina_112.png",
+  plot = grafico_timeline_mediana_iqr,
+  width = 10,
+  height = 5.8,
+  dpi = 300
+)
+
+
+timeline_resumen_facet <- timeline_resumen %>%
+  mutate(
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto"))
+  )
+
+grafico_timeline_facet <- ggplot(
+  timeline_resumen_facet,
+  aes(
+    x = mediana,
+    y = video_grupo,
+    color = evento
+  )
+) +
+  geom_line(
+    aes(group = video_grupo),
+    color = "grey70",
+    linewidth = 1
+  ) +
+  geom_point(
+    size = 4
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    hjust = -0.25,
+    size = 3.4,
+    show.legend = FALSE
+  ) +
+  facet_wrap(
+    ~ dispositivo,
+    ncol = 1
+  ) +
+  scale_color_manual(
+    values = c(
+      "Administra adrenalina" = "#2C7FB8",
+      "Llama al 112" = "#D95F02"
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(0, max(timeline_resumen_facet$mediana, na.rm = TRUE) * 1.25),
+    breaks = pretty_breaks(n = 6),
+    labels = function(x) paste0(x, " s")
+  ) +
+  labs(
+    title = "Línea temporal de actuación por dispositivo",
+    subtitle = "Tiempo mediano hasta administrar adrenalina y llamar al 112",
+    x = "Tiempo desde el inicio de la simulación",
+    y = NULL,
+    color = "Evento"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_timeline_facet
+
+ggsave(
+  filename = "grafico_timeline_facet_dispositivo_video.png",
+  plot = grafico_timeline_facet,
+  width = 9,
+  height = 6.5,
+  dpi = 300
+)
+
+
+```
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(forcats)
+
+
+to_seconds <- function(x) {
+  
+  if (inherits(x, "hms") || inherits(x, "difftime")) {
+    return(as.numeric(x, units = "secs"))
+  }
+  
+  if (inherits(x, "POSIXct") || inherits(x, "POSIXt")) {
+    return(
+      lubridate::hour(x) * 3600 +
+        lubridate::minute(x) * 60 +
+        lubridate::second(x)
+    )
+  }
+  
+  x_chr <- stringr::str_trim(as.character(x))
+  x_chr[x_chr %in% c("", ".", "NA", "NaN", "NULL", "null")] <- NA_character_
+  
+  out <- suppressWarnings(as.numeric(x_chr))
+  
+  
+  idx_excel <- !is.na(out) & out > 0 & out < 1
+  out[idx_excel] <- out[idx_excel] * 86400
+  
+  
+  is_hms <- stringr::str_detect(
+    x_chr,
+    "^\\d{1,2}:\\d{2}:\\d{2}(\\.\\d+)?$"
+  )
+  
+  is_hms[is.na(is_hms)] <- FALSE
+  
+  if (any(is_hms)) {
+    out[is_hms] <- suppressWarnings(
+      lubridate::period_to_seconds(lubridate::hms(x_chr[is_hms]))
+    )
+  }
+  
+  as.numeric(out)
+}
+
+
+df_tiempos_timeline <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto")),
+    
+    sp_tiempo_medicacion_s = to_seconds(sp_tiempo_medicacion),
+    sp_tiempo112_s         = to_seconds(sp_tiempo112),
+    au_tiempo_medicacion_s = to_seconds(au_tiempo_medicacion),
+    au_tiempo112_s         = to_seconds(au_tiempo112)
+  )
+
+
+timeline_long <- df_tiempos_timeline %>%
+  select(
+    id,
+    video_grupo,
+    sp_tiempo_medicacion_s,
+    sp_tiempo112_s,
+    au_tiempo_medicacion_s,
+    au_tiempo112_s
+  ) %>%
+  pivot_longer(
+    cols = c(
+      sp_tiempo_medicacion_s,
+      sp_tiempo112_s,
+      au_tiempo_medicacion_s,
+      au_tiempo112_s
+    ),
+    names_to = "variable",
+    values_to = "tiempo_s"
+  ) %>%
+  mutate(
+    dispositivo = case_when(
+      str_starts(variable, "sp_") ~ "Spray nasal",
+      str_starts(variable, "au_") ~ "Autoinyector"
+    ),
+    evento = case_when(
+      str_detect(variable, "tiempo_medicacion") ~ "Administra adrenalina",
+      str_detect(variable, "tiempo112") ~ "Llama al 112"
+    ),
+    dispositivo = factor(
+      dispositivo,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    evento = factor(
+      evento,
+      levels = c("Administra adrenalina", "Llama al 112")
+    )
+  ) %>%
+  filter(
+    !is.na(tiempo_s),
+    !is.na(video_grupo),
+    !is.na(dispositivo),
+    !is.na(evento)
+  )
+
+
+medida_tiempo <- "mediana"
+
+timeline_resumen <- timeline_long %>%
+  group_by(dispositivo, video_grupo, evento) %>%
+  summarise(
+    n = n(),
+    media = mean(tiempo_s, na.rm = TRUE),
+    mediana = median(tiempo_s, na.rm = TRUE),
+    q1 = quantile(tiempo_s, 0.25, na.rm = TRUE),
+    q3 = quantile(tiempo_s, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    grupo = paste(dispositivo, video_grupo, sep = " · "),
+    grupo = factor(
+      grupo,
+      levels = c(
+        "Spray nasal · Reel",
+        "Spray nasal · Corto",
+        "Autoinyector · Reel",
+        "Autoinyector · Corto"
+      )
+    ),
+    tiempo_plot = case_when(
+      medida_tiempo == "mediana" ~ mediana,
+      medida_tiempo == "media" ~ media,
+      TRUE ~ mediana
+    )
+  ) %>%
+  arrange(tiempo_plot, evento, grupo)
+
+timeline_resumen
+
+
+timeline_plot_data <- timeline_resumen %>%
+  arrange(tiempo_plot) %>%
+  mutate(
+    etiqueta = paste0(
+      as.character(grupo),
+      "\n",
+      as.character(evento),
+      ": ",
+      sprintf("%.1f", tiempo_plot),
+      " s"
+    ),
+    
+    y_punto = 0,
+    y_etiqueta = c(0.18, -0.18, 0.28, -0.28, 0.18, -0.18, 0.28, -0.28)[seq_len(n())],
+    
+    
+    x_texto = tiempo_plot + 0.55,
+    
+    
+    x_linea_fin = tiempo_plot + 0.38
+  )
+
+timeline_plot_data
+
+
+grafico_timeline_unico <- ggplot(timeline_plot_data, aes(x = tiempo_plot, y = y_punto)) +
+  
+  
+  geom_segment(
+    aes(
+      x = 15,
+      xend = 35,
+      y = 0,
+      yend = 0
+    ),
+    linewidth = 1.2,
+    color = "grey45",
+    inherit.aes = FALSE
+  ) +
+  
+  
+  geom_segment(
+    aes(
+      x = tiempo_plot,
+      xend = x_linea_fin,
+      y = y_punto,
+      yend = y_etiqueta
+    ),
+    linewidth = 0.5,
+    color = "grey55"
+  ) +
+  
+  
+  geom_point(
+    aes(
+      color = grupo,
+      shape = evento
+    ),
+    size = 4
+  ) +
+  
+ 
+  geom_text(
+    aes(
+      x = x_texto,
+      y = y_etiqueta,
+      label = etiqueta,
+      color = grupo
+    ),
+    hjust = 0,
+    size = 3.2,
+    lineheight = 0.95,
+    show.legend = FALSE
+  ) +
+  
+  scale_color_manual(
+    values = c(
+      "Spray nasal · Reel" = "#2C7FB8",
+      "Spray nasal · Corto" = "#7FCDBB",
+      "Autoinyector · Reel" = "#D95F02",
+      "Autoinyector · Corto" = "#FDAE6B"
+    ),
+    name = "Dispositivo y vídeo"
+  ) +
+  
+  scale_shape_manual(
+    values = c(
+      "Administra adrenalina" = 16,
+      "Llama al 112" = 17
+    ),
+    name = "Evento"
+  ) +
+  
+  scale_x_continuous(
+    breaks = 15:35,
+    labels = function(x) paste0(x, " s")
+  ) +
+  
+  scale_y_continuous(
+    limits = c(-0.45, 0.45)
+  ) +
+  
+ 
+  coord_cartesian(
+    xlim = c(15, 35),
+    ylim = c(-0.45, 0.45),
+    clip = "off"
+  ) +
+  
+  labs(
+    title = "Línea temporal de actuación",
+    subtitle = paste0(
+      "Todos los hitos en una única línea temporal (",
+      medida_tiempo,
+      " en segundos)"
+    ),
+    x = "Tiempo desde el inicio de la simulación",
+    y = NULL
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = margin(10, 140, 10, 10)
+  )
+
+grafico_timeline_unico
+
+ggsave(
+  filename = "grafico_timeline_unico_dispositivo_video_zoom_20_35.png",
+  plot = grafico_timeline_unico,
+  width = 14,
+  height = 6.5,
+  dpi = 300
+)
+```
+
+```{r}
+
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(forcats)
+
+
+to_seconds <- function(x) {
+  
+  if (inherits(x, "hms") || inherits(x, "difftime")) {
+    return(as.numeric(x, units = "secs"))
+  }
+  
+  if (inherits(x, "POSIXct") || inherits(x, "POSIXt")) {
+    return(
+      lubridate::hour(x) * 3600 +
+        lubridate::minute(x) * 60 +
+        lubridate::second(x)
+    )
+  }
+  
+  x_chr <- stringr::str_trim(as.character(x))
+  x_chr[x_chr %in% c("", ".", "NA", "NaN", "NULL", "null")] <- NA_character_
+  
+  out <- suppressWarnings(as.numeric(x_chr))
+  
+  
+  idx_excel <- !is.na(out) & out > 0 & out < 1
+  out[idx_excel] <- out[idx_excel] * 86400
+  
+  
+  is_hms <- stringr::str_detect(
+    x_chr,
+    "^\\d{1,2}:\\d{2}:\\d{2}(\\.\\d+)?$"
+  )
+  
+  is_hms[is.na(is_hms)] <- FALSE
+  
+  if (any(is_hms)) {
+    out[is_hms] <- suppressWarnings(
+      lubridate::period_to_seconds(lubridate::hms(x_chr[is_hms]))
+    )
+  }
+  
+  as.numeric(out)
+}
+
+
+df_tiempos_timeline <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto")),
+    
+    sp_tiempo_medicacion_s = to_seconds(sp_tiempo_medicacion),
+    sp_tiempo112_s         = to_seconds(sp_tiempo112),
+    au_tiempo_medicacion_s = to_seconds(au_tiempo_medicacion),
+    au_tiempo112_s         = to_seconds(au_tiempo112)
+  )
+
+timeline_long <- df_tiempos_timeline %>%
+  select(
+    id,
+    video_grupo,
+    sp_tiempo_medicacion_s,
+    sp_tiempo112_s,
+    au_tiempo_medicacion_s,
+    au_tiempo112_s
+  ) %>%
+  pivot_longer(
+    cols = c(
+      sp_tiempo_medicacion_s,
+      sp_tiempo112_s,
+      au_tiempo_medicacion_s,
+      au_tiempo112_s
+    ),
+    names_to = "variable",
+    values_to = "tiempo_s"
+  ) %>%
+  mutate(
+    dispositivo = case_when(
+      str_starts(variable, "sp_") ~ "Spray nasal",
+      str_starts(variable, "au_") ~ "Autoinyector"
+    ),
+    evento = case_when(
+      str_detect(variable, "tiempo_medicacion") ~ "Administra adrenalina",
+      str_detect(variable, "tiempo112") ~ "Llama al 112"
+    ),
+    dispositivo = factor(
+      dispositivo,
+      levels = c("Spray nasal", "Autoinyector")
+    ),
+    evento = factor(
+      evento,
+      levels = c("Administra adrenalina", "Llama al 112")
+    )
+  ) %>%
+  filter(
+    !is.na(tiempo_s),
+    !is.na(video_grupo),
+    !is.na(dispositivo),
+    !is.na(evento)
+  )
+
+
+medida_tiempo <- "media"
+
+timeline_resumen <- timeline_long %>%
+  group_by(dispositivo, video_grupo, evento) %>%
+  summarise(
+    n = n(),
+    media = mean(tiempo_s, na.rm = TRUE),
+    mediana = median(tiempo_s, na.rm = TRUE),
+    q1 = quantile(tiempo_s, 0.25, na.rm = TRUE),
+    q3 = quantile(tiempo_s, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    grupo = paste(dispositivo, video_grupo, sep = " · "),
+    grupo = factor(
+      grupo,
+      levels = c(
+        "Spray nasal · Reel",
+        "Spray nasal · Corto",
+        "Autoinyector · Reel",
+        "Autoinyector · Corto"
+      )
+    ),
+    tiempo_plot = case_when(
+      medida_tiempo == "mediana" ~ mediana,
+      medida_tiempo == "media" ~ media,
+      TRUE ~ mediana
+    )
+  ) %>%
+  arrange(tiempo_plot, evento, grupo)
+
+timeline_resumen
+
+
+timeline_plot_data <- timeline_resumen %>%
+  arrange(tiempo_plot) %>%
+  mutate(
+    etiqueta = paste0(
+      as.character(grupo),
+      "\n",
+      as.character(evento),
+      ": ",
+      sprintf("%.1f", tiempo_plot),
+      " s"
+    ),
+    
+    y_punto = 0,
+    y_etiqueta = c(0.18, -0.18, 0.28, -0.28, 0.18, -0.18, 0.28, -0.28)[seq_len(n())],
+    
+    
+    x_texto = tiempo_plot + 0.55,
+   
+    x_linea_fin = tiempo_plot + 0.38
+  )
+
+timeline_plot_data
+
+
+grafico_timeline_media <- ggplot(timeline_plot_data, aes(x = tiempo_plot, y = y_punto)) +
+  
+ 
+  geom_segment(
+    aes(
+      x = 19,
+      xend = 54,
+      y = 0,
+      yend = 0
+    ),
+    linewidth = 1.2,
+    color = "grey45",
+    inherit.aes = FALSE
+  ) +
+  
+
+  geom_segment(
+    aes(
+      x = tiempo_plot,
+      xend = x_linea_fin,
+      y = y_punto,
+      yend = y_etiqueta
+    ),
+    linewidth = 0.5,
+    color = "grey55"
+  ) +
+  
+ 
+  geom_point(
+    aes(
+      color = grupo,
+      shape = evento
+    ),
+    size = 4
+  ) +
+  
+  
+  geom_text(
+    aes(
+      x = x_texto,
+      y = y_etiqueta,
+      label = etiqueta,
+      color = grupo
+    ),
+    hjust = 0,
+    size = 3.2,
+    lineheight = 0.95,
+    show.legend = FALSE
+  ) +
+  
+  scale_color_manual(
+    values = c(
+      "Spray nasal · Reel" = "#2C7FB8",
+      "Spray nasal · Corto" = "#7FCDBB",
+      "Autoinyector · Reel" = "#D95F02",
+      "Autoinyector · Corto" = "#FDAE6B"
+    ),
+    name = "Dispositivo y vídeo"
+  ) +
+  
+  scale_shape_manual(
+    values = c(
+      "Administra adrenalina" = 16,
+      "Llama al 112" = 17
+    ),
+    name = "Evento"
+  ) +
+  
+  scale_x_continuous(
+    breaks = 19:54,
+    labels = function(x) paste0(x, " s")
+  ) +
+  
+  scale_y_continuous(
+    limits = c(-0.45, 0.45)
+  ) +
+  
+  coord_cartesian(
+    xlim = c(19, 54),
+    ylim = c(-0.45, 0.45),
+    clip = "off"
+  ) +
+  
+  labs(
+    title = "Línea temporal de actuación",
+    subtitle = paste0(
+      "Todos los hitos en una única línea temporal (",
+      medida_tiempo,
+      " en segundos)"
+    ),
+    x = "Tiempo desde el inicio de la simulación",
+    y = NULL
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = margin(10, 140, 10, 10)
+  )
+
+grafico_timeline_media
+
+ggsave(
+  filename = "grafico_timeline_media_dispositivo_video_zoom_20_35.png",
+  plot = grafico_timeline_unico,
+  width = 14,
+  height = 6.5,
+  dpi = 300
+)
+```
+
+```{r, include=TRUE}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(stringi)
+library(ggplot2)
+library(gt)
+library(forcats)
+library(scales)
+library(patchwork)
+
+
+col_q14_preparado_spray <- names(df)[
+  str_detect(names(df), "^x14_") |
+    str_detect(names(df), "preparado.*spray") |
+    str_detect(names(df), "sentirias.*usar.*spray") |
+    str_detect(names(df), "usar.*spray.*necesario")
+][1]
+
+col_q16_auto_facil <- names(df)[
+  str_detect(names(df), "^x16_") |
+    str_detect(names(df), "autoinyector.*facil.*riesgo")
+][1]
+
+col_q17_spray_facil <- names(df)[
+  str_detect(names(df), "^x17_") |
+    str_detect(names(df), "spray.*facil.*riesgo")
+][1]
+
+col_q18_preferencia <- names(df)[
+  str_detect(names(df), "^x18_") |
+    str_detect(names(df), "emergencia.*ambos.*dispositivos")
+][1]
+
+cols_clave <- c(
+  col_q14_preparado_spray = col_q14_preparado_spray,
+  col_q16_auto_facil = col_q16_auto_facil,
+  col_q17_spray_facil = col_q17_spray_facil,
+  col_q18_preferencia = col_q18_preferencia
+)
+
+cols_clave
+
+
+df_auto_clave <- df %>%
+  mutate(
+    video_grupo = case_when(
+      str_to_lower(video) == "reel" ~ "Reel",
+      str_to_lower(video) == "amor" ~ "Corto",
+      TRUE ~ as.character(video)
+    ),
+    video_grupo = factor(video_grupo, levels = c("Reel", "Corto")),
+    
+    q14_preparado_spray = suppressWarnings(as.numeric(.data[[col_q14_preparado_spray]])),
+    q16_auto_facil = suppressWarnings(as.numeric(.data[[col_q16_auto_facil]])),
+    q17_spray_facil = suppressWarnings(as.numeric(.data[[col_q17_spray_facil]])),
+    
+    q18_preferencia_original = as.character(.data[[col_q18_preferencia]]),
+    q18_preferencia_limpia = q18_preferencia_original %>%
+      str_to_lower() %>%
+      stringi::stri_trans_general("Latin-ASCII") %>%
+      str_squish(),
+    
+    q18_preferencia = case_when(
+      str_detect(q18_preferencia_limpia, "spray") &
+        !str_detect(q18_preferencia_limpia, "autoinyector") ~ "Spray nasal",
+      
+      str_detect(q18_preferencia_limpia, "autoinyector") &
+        !str_detect(q18_preferencia_limpia, "spray") &
+        !str_detect(q18_preferencia_limpia, "indiferente") ~ "Autoinyector",
+      
+      str_detect(q18_preferencia_limpia, "indiferente") ~ "Indiferente",
+      
+      str_detect(q18_preferencia_limpia, "spray") &
+        str_detect(q18_preferencia_limpia, "autoinyector") ~ "Respuesta múltiple",
+      
+      is.na(q18_preferencia_original) | q18_preferencia_original == "" ~ "No responde",
+      
+      TRUE ~ "Otra / no clara"
+    ),
+    
+    q18_preferencia = factor(
+      q18_preferencia,
+      levels = c(
+        "Spray nasal",
+        "Autoinyector",
+        "Indiferente",
+        "Respuesta múltiple",
+        "Otra / no clara",
+        "No responde"
+      )
+    )
+  )
+
+
+summary(df_auto_clave$q14_preparado_spray)
+summary(df_auto_clave$q16_auto_facil)
+summary(df_auto_clave$q17_spray_facil)
+table(df_auto_clave$q18_preferencia, useNA = "ifany")
+table(df_auto_clave$video_grupo, useNA = "ifany")
+
+
+
+vars_escala_clave <- c(
+  "q14_preparado_spray",
+  "q16_auto_facil",
+  "q17_spray_facil"
+)
+
+diccionario_escala_clave <- tibble(
+  variable = vars_escala_clave,
+  indicador = c(
+    "Autoconfianza para usar spray nasal",
+    "Autoinyector: facilidad percibida y bajo riesgo de error",
+    "Spray nasal: facilidad percibida y bajo riesgo de error"
+  )
+)
+
+orden_indicadores_escala <- c(
+  "Autoconfianza para usar spray nasal",
+  "Spray nasal: facilidad percibida y bajo riesgo de error",
+  "Autoinyector: facilidad percibida y bajo riesgo de error"
+)
+
+escala_clave_long <- df_auto_clave %>%
+  select(video_grupo, all_of(vars_escala_clave)) %>%
+  pivot_longer(
+    cols = all_of(vars_escala_clave),
+    names_to = "variable",
+    values_to = "valor"
+  ) %>%
+  left_join(diccionario_escala_clave, by = "variable") %>%
+  mutate(
+    valor = suppressWarnings(as.numeric(valor)),
+    indicador = factor(indicador, levels = orden_indicadores_escala)
+  )
+
+
+resumen_escala_total <- escala_clave_long %>%
+  group_by(variable, indicador) %>%
+  summarise(
+    n = sum(!is.na(valor)),
+    media = mean(valor, na.rm = TRUE),
+    sd = sd(valor, na.rm = TRUE),
+    mediana = median(valor, na.rm = TRUE),
+    q1 = quantile(valor, 0.25, na.rm = TRUE),
+    q3 = quantile(valor, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    grupo = "Total"
+  ) %>%
+  select(
+    variable,
+    indicador,
+    grupo,
+    n,
+    media,
+    sd,
+    mediana,
+    q1,
+    q3
+  )
+
+resumen_escala_video <- escala_clave_long %>%
+  group_by(variable, indicador, video_grupo) %>%
+  summarise(
+    n = sum(!is.na(valor)),
+    media = mean(valor, na.rm = TRUE),
+    sd = sd(valor, na.rm = TRUE),
+    mediana = median(valor, na.rm = TRUE),
+    q1 = quantile(valor, 0.25, na.rm = TRUE),
+    q3 = quantile(valor, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    grupo = as.character(video_grupo)
+  ) %>%
+  select(
+    variable,
+    indicador,
+    grupo,
+    n,
+    media,
+    sd,
+    mediana,
+    q1,
+    q3
+  )
+
+p_escala_clave <- escala_clave_long %>%
+  filter(!is.na(valor), !is.na(video_grupo)) %>%
+  group_by(variable, indicador) %>%
+  summarise(
+    p_valor = tryCatch(
+      wilcox.test(valor ~ video_grupo)$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p = case_when(
+      is.na(p_valor) ~ "",
+      p_valor < 0.001 ~ "<0.001",
+      TRUE ~ sprintf("%.3f", p_valor)
+    )
+  )
+
+tabla_escala_clave <- bind_rows(
+  resumen_escala_total,
+  resumen_escala_video
+) %>%
+  mutate(
+    resultado = paste0(
+      sprintf("%.1f", media),
+      " ± ",
+      sprintf("%.1f", sd),
+      "\n",
+      sprintf("%.1f", mediana),
+      " [",
+      sprintf("%.1f", q1),
+      "-",
+      sprintf("%.1f", q3),
+      "]"
+    ),
+    grupo = case_when(
+      grupo == "Corto" ~ "Corto",
+      TRUE ~ grupo
+    )
+  ) %>%
+  select(variable, indicador, grupo, resultado) %>%
+  pivot_wider(
+    names_from = grupo,
+    values_from = resultado
+  ) %>%
+  left_join(p_escala_clave, by = c("variable", "indicador")) %>%
+  mutate(
+    bloque = "Escala 1-5",
+    indicador = factor(indicador, levels = orden_indicadores_escala)
+  ) %>%
+  arrange(indicador) %>%
+  select(
+    bloque,
+    indicador,
+    Total,
+    Reel,
+    Corto,
+    p_valor,
+    p
+  )
+
+tabla_escala_clave
+
+resumen_escala_video <- escala_clave_long %>%
+  group_by(variable, indicador, video_grupo) %>%
+  summarise(
+    n = sum(!is.na(valor)),
+    media = mean(valor, na.rm = TRUE),
+    sd = sd(valor, na.rm = TRUE),
+    mediana = median(valor, na.rm = TRUE),
+    q1 = quantile(valor, 0.25, na.rm = TRUE),
+    q3 = quantile(valor, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    grupo = as.character(video_grupo)
+  ) %>%
+  select(
+    variable,
+    indicador,
+    grupo,
+    n,
+    media,
+    sd,
+    mediana,
+    q1,
+    q3
+  )
+
+resumen_escala_video
+
+
+preferencia_total <- df_auto_clave %>%
+  count(q18_preferencia, name = "n") %>%
+  mutate(
+    grupo = "Total",
+    porcentaje = 100 * n / sum(n),
+    resultado = paste0(n, " (", sprintf("%.1f", porcentaje), "%)")
+  )
+
+preferencia_video <- df_auto_clave %>%
+  count(video_grupo, q18_preferencia, name = "n") %>%
+  group_by(video_grupo) %>%
+  mutate(
+    grupo = as.character(video_grupo),
+    porcentaje = 100 * n / sum(n),
+    resultado = paste0(n, " (", sprintf("%.1f", porcentaje), "%)")
+  ) %>%
+  ungroup()
+
+
+pref_dic <- df_auto_clave %>%
+  filter(q18_preferencia %in% c("Spray nasal", "Autoinyector"))
+
+tabla_pref_fisher <- table(
+  pref_dic$q18_preferencia,
+  pref_dic$video_grupo
+)
+
+p_pref <- tryCatch(
+  fisher.test(tabla_pref_fisher)$p.value,
+  error = function(e) NA_real_
+)
+
+p_pref_fmt <- case_when(
+  is.na(p_pref) ~ "",
+  p_pref < 0.001 ~ "<0.001",
+  TRUE ~ sprintf("%.3f", p_pref)
+)
+
+tabla_preferencia_clave <- bind_rows(
+  preferencia_total,
+  preferencia_video
+) %>%
+  mutate(
+    grupo = case_when(
+      grupo == "Corto" ~ "Corto",
+      TRUE ~ grupo
+    ),
+    indicador = paste0("Preferencia: ", as.character(q18_preferencia)),
+    bloque = "Preferencia en emergencia real"
+  ) %>%
+  select(
+    bloque,
+    indicador,
+    grupo,
+    resultado
+  ) %>%
+  pivot_wider(
+    names_from = grupo,
+    values_from = resultado,
+    values_fill = "0 (0.0%)"
+  ) %>%
+  mutate(
+    p_valor = if_else(
+      indicador %in% c("Preferencia: Spray nasal", "Preferencia: Autoinyector"),
+      p_pref,
+      NA_real_
+    ),
+    p = if_else(
+      indicador %in% c("Preferencia: Spray nasal", "Preferencia: Autoinyector"),
+      p_pref_fmt,
+      ""
+    )
+  )
+
+tabla_preferencia_clave
+
+
+
+tabla_autopercepcion_clave <- bind_rows(
+  tabla_escala_clave,
+  tabla_preferencia_clave
+) %>%
+  mutate(
+    bloque = factor(
+      bloque,
+      levels = c(
+        "Escala 1-5",
+        "Preferencia en emergencia real"
+      )
+    )
+  ) %>%
+  arrange(bloque, indicador)
+
+tabla_autopercepcion_clave_gt <- tabla_autopercepcion_clave %>%
+  gt(groupname_col = "bloque") %>%
+  cols_label(
+    indicador = "Variable",
+    Total = "Total",
+    Reel = "Reel",
+    Corto = "Corto",
+    p = "p"
+  ) %>%
+  cols_hide(columns = p_valor) %>%
+  tab_header(
+    title = md("**Autopercepción tras ver el vídeo**"),
+    subtitle = md("Autoconfianza, facilidad percibida y preferencia en emergencia real")
+  ) %>%
+  tab_spanner(
+    label = "Tipo de vídeo",
+    columns = c(Reel, Corto)
+  ) %>%
+  tab_source_note(
+    source_note = md(
+      "Variables en escala 1-5: media ± DE y mediana [IQR].  
+      Preferencia: n (%).  
+      El p-valor compara Reel frente a Corto. Para escalas se usa Wilcoxon-Mann-Whitney; para preferencia dicotómica Spray nasal vs Autoinyector se usa Fisher."
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#F2F2F2"),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      columns = p,
+      rows = p_valor < 0.05
+    )
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = indicador
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(Total, Reel, Corto, p)
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 11,
+    heading.title.font.size = 16,
+    heading.subtitle.font.size = 12,
+    column_labels.font.weight = "bold",
+    row_group.font.weight = "bold",
+    table.border.top.width = px(2),
+    table.border.bottom.width = px(2),
+    data_row.padding = px(6),
+    source_notes.font.size = 9
+  )
+
+tabla_autopercepcion_clave_gt
+
+Sys.unsetenv("CHROMOTE_CHROME")
+
+Sys.setenv(
+  CHROMOTE_CHROME = "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+)
+
+gtsave(
+  tabla_autopercepcion_clave_gt,
+  filename = "tabla_autopercepcion_q14_q16_q17_q18.png",
+  expand = 10
+)
+
+
+
+
+```
+
+
+```{r}
+
+grafico_escala_clave_data <- escala_clave_long %>%
+  filter(!is.na(valor), !is.na(video_grupo)) %>%
+  group_by(indicador, video_grupo) %>%
+  summarise(
+    n = n(),
+    media = mean(valor, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    indicador = factor(indicador, levels = rev(orden_indicadores_escala)),
+    etiqueta = paste0(sprintf("%.1f", media), "/5")
+  )
+
+grafico_escala_clave <- ggplot(
+  grafico_escala_clave_data,
+  aes(
+    x = media,
+    y = indicador,
+    color = video_grupo
+  )
+) +
+  geom_point(
+    size = 4,
+    position = position_dodge(width = 0.55)
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    position = position_dodge(width = 0.55),
+    hjust = -0.45,
+    size = 3.4,
+    show.legend = FALSE
+  ) +
+  scale_color_manual(
+    values = c(
+      "Reel" = "#2C7FB8",
+      "Corto" = "#D95F02"
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(1, 5.45),
+    breaks = 1:5
+  ) +
+  labs(
+    title = "Escalas de autopercepción",
+    subtitle = "Media en escala 1-5",
+    x = "Puntuación media",
+    y = NULL,
+    color = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_escala_clave
+
+
+
+grafico_pref_clave_data <- df_auto_clave %>%
+  filter(!is.na(video_grupo), !is.na(q18_preferencia)) %>%
+  count(video_grupo, q18_preferencia) %>%
+  group_by(video_grupo) %>%
+  mutate(
+    porcentaje = 100 * n / sum(n),
+    etiqueta = paste0(n, " (", sprintf("%.1f", porcentaje), "%)")
+  ) %>%
+  ungroup() %>%
+  mutate(
+    q18_preferencia = factor(
+      q18_preferencia,
+      levels = c(
+        "Spray nasal",
+        "Autoinyector",
+        "Indiferente",
+        "Respuesta múltiple",
+        "Otra / no clara",
+        "No responde"
+      )
+    )
+  )
+
+grafico_pref_clave <- ggplot(
+  grafico_pref_clave_data,
+  aes(
+    x = porcentaje,
+    y = q18_preferencia,
+    fill = video_grupo
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = etiqueta),
+    position = position_dodge(width = 0.8),
+    hjust = -0.05,
+    size = 3.2
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Reel" = "#2C7FB8",
+      "Corto" = "#D95F02"
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(0, 115),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Preferencia en emergencia real",
+    subtitle = "Distribución porcentual",
+    x = "Porcentaje",
+    y = NULL,
+    fill = "Vídeo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+grafico_pref_clave
+
+
+
+grafico_autopercepcion_clave <- grafico_escala_clave + grafico_pref_clave +
+  plot_layout(widths = c(1.1, 1)) +
+  plot_annotation(
+    title = "Autopercepción tras ver el vídeo",
+    subtitle = "Autoconfianza, facilidad percibida y preferencia en emergencia real",
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 16),
+      plot.subtitle = element_text(size = 12)
+    )
+  )
+
+grafico_autopercepcion_clave
+
+ggsave(
+  filename = "grafico_autopercepcion_q14_q16_q17_q18.png",
+  plot = grafico_autopercepcion_clave,
+  width = 14,
+  height = 6.5,
+  dpi = 300
+)
+
+```
+
+
+
+
