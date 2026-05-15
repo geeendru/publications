@@ -1,0 +1,1213 @@
+---
+title: "DispAnt2"
+author: "Laura Gendra Maneiro"
+date: "2026-04-06"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r setup, include=TRUE}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(pracma)
+library(emmeans)
+library(gt)
+library(stringr)
+
+leer_dispositivo <- function(archivo, nombre_dispositivo) {
+  hojas <- excel_sheets(archivo)
+
+  lapply(hojas, function(h) {
+    read_excel(archivo, sheet = h) %>%
+      mutate(
+        Tiempo = as.numeric(Tiempo),
+        Presión = as.numeric(Presión),
+        sujeto = h,
+        dispositivo = nombre_dispositivo
+      )
+  }) %>% bind_rows()
+}
+
+datos_total <- bind_rows(
+  leer_dispositivo("L.xlsx", "L"),
+  leer_dispositivo("D.xlsx",    "D"),
+  leer_dispositivo("R.xlsx", "R")
+)
+
+colores_disp <- c(
+  "L" = "darkgreen",
+  "D"    = "coral1",
+  "R" = "cornflowerblue"
+)
+orden_disp <- c("L", "D", "R")
+
+datos_total <- datos_total %>%
+  mutate(dispositivo = factor(dispositivo, levels = orden_disp))
+
+auc_por_sujeto <- auc_por_sujeto %>%
+  mutate(dispositivo = factor(dispositivo, levels = orden_disp))
+
+auc_modelo <- auc_modelo %>%
+  mutate(dispositivo = factor(dispositivo, levels = orden_disp))
+
+pico_por_sujeto <- pico_por_sujeto %>%
+  mutate(dispositivo = factor(dispositivo, levels = orden_disp))
+```
+
+```{r}
+
+calc_ventana_auc <- function(df) {
+  df <- df %>% arrange(Tiempo)
+
+  neg_idx <- which(df$Presión < 0)
+  if (length(neg_idx) == 0) {
+    return(tibble(t_inicio = NA_real_, t_fin = NA_real_, duracion = NA_real_, AUC = NA_real_))
+  }
+
+  i0 <- min(neg_idx)
+  after <- seq(i0 + 1, nrow(df))
+  i1 <- after[which(df$Presión[after] >= 0)][1]
+  if (is.na(i1)) i1 <- nrow(df)
+
+  t0 <- df$Tiempo[i0]
+  t1 <- df$Tiempo[i1]
+  dur <- as.numeric(t1 - t0)
+
+  df_win <- df %>% filter(Tiempo >= t0, Tiempo <= t1)
+
+  tibble(
+    t_inicio = t0,
+    t_fin = t1,
+    duracion = dur,
+    AUC = abs(trapz(df_win$Tiempo, abs(df_win$Presión)))
+  )
+}
+
+auc_por_sujeto <- datos_total %>%
+  group_by(sujeto, dispositivo) %>%
+  group_modify(~ calc_ventana_auc(.x)) %>%
+  ungroup() %>%
+  mutate(
+    sujeto = factor(sujeto),
+    dispositivo = factor(dispositivo),
+    AUC_norm = AUC / duracion
+  )
+
+if ("L" %in% levels(auc_por_sujeto$dispositivo)) {
+  auc_por_sujeto <- auc_por_sujeto %>%
+    mutate(dispositivo = relevel(dispositivo, ref = "L"))
+}
+
+auc_modelo <- auc_por_sujeto %>%
+  filter(is.finite(AUC), is.finite(AUC_norm), is.finite(duracion),
+         duracion > 0, AUC > 0, AUC_norm > 0)
+```
+
+```{r}
+
+m_auc      <- lm(log(AUC)      ~ dispositivo, data = auc_modelo)
+m_auc_norm <- lm(log(AUC_norm) ~ dispositivo, data = auc_modelo)
+
+extraer_means_ratios <- function(modelo, etiqueta_outcome) {
+  emm <- emmeans(modelo, ~ dispositivo)
+
+  means <- as.data.frame(summary(emm, type = "response", infer = TRUE)) %>%
+    transmute(
+      Outcome = etiqueta_outcome,
+      Dispositivo = dispositivo,
+      Media = response,
+      IC95_inf = lower.CL,
+      IC95_sup = upper.CL
+    )
+
+  contr <- contrast(emm, method = "trt.vs.ctrl", ref = "L", adjust = "holm")
+  ratios <- as.data.frame(summary(contr, type = "response", infer = TRUE)) %>%
+    transmute(
+      Outcome = etiqueta_outcome,
+      Comparación = contrast,
+      Ratio = ratio,
+      IC95_inf = lower.CL,
+      IC95_sup = upper.CL,
+      p_ajustada = p.value
+    )
+
+  list(means = means, ratios = ratios)
+}
+
+res_auc      <- extraer_means_ratios(m_auc,      "AUC total (efecto total)")
+res_auc_norm <- extraer_means_ratios(m_auc_norm, "AUC/seg (intensidad media)")
+
+tabla_means  <- bind_rows(res_auc$means,  res_auc_norm$means)
+tabla_ratios <- bind_rows(res_auc$ratios, res_auc_norm$ratios)
+
+gt_means <- tabla_means %>%
+  gt(groupname_col = "Outcome") %>%
+  tab_header(
+    title = md("**Medias geométricas por dispositivo (IC95%)**"),
+    subtitle = md("Grupos independientes; modelo lineal en log-escala")
+  ) %>%
+  cols_label(
+    Dispositivo = "Dispositivo",
+    Media = "Media geométrica",
+    IC95_inf = "IC95% inf",
+    IC95_sup = "IC95% sup"
+  ) %>%
+  fmt_number(columns = c(Media, IC95_inf, IC95_sup), decimals = 2) %>%
+  cols_align("center", everything()) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_options(
+    table.font.size = px(12),
+    data_row.padding = px(4),
+    heading.title.font.size = px(14),
+    heading.subtitle.font.size = px(12),
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    column_labels.border.bottom.color = "black"
+  ) %>%
+  opt_table_lines("all")
+
+gt_ratios <- tabla_ratios %>%
+  gt(groupname_col = "Outcome") %>%
+  tab_header(
+    title = md("**Ratios vs L (IC95%)**"),
+    subtitle = md("L = 1.00; p-valores ajustados por Holm")
+  ) %>%
+  cols_label(
+    Comparación = "Comparación",
+    Ratio = "Ratio",
+    IC95_inf = "IC95% inf",
+    IC95_sup = "IC95% sup",
+    p_ajustada = "p (Holm)"
+  ) %>%
+  fmt_number(columns = c(Ratio, IC95_inf, IC95_sup), decimals = 2) %>%
+  fmt_number(columns = p_ajustada, decimals = 4) %>%
+  cols_align("center", everything()) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_options(
+    table.font.size = px(12),
+    data_row.padding = px(4),
+    heading.title.font.size = px(14),
+    heading.subtitle.font.size = px(12),
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    column_labels.border.bottom.color = "black"
+  ) %>%
+  opt_table_lines("all")
+```
+
+```{r}
+
+
+gt_means
+```
+
+```{r}
+
+
+gt_ratios
+```
+
+```{r}
+
+
+pico_por_sujeto <- datos_total %>%
+  inner_join(
+    auc_modelo %>% select(sujeto, dispositivo, t_inicio, t_fin),
+    by = c("sujeto", "dispositivo")
+  ) %>%
+  filter(Tiempo >= t_inicio, Tiempo <= t_fin) %>%
+  group_by(sujeto, dispositivo) %>%
+  summarise(
+    pico_abs = max(abs(Presión), na.rm = TRUE),
+    pico_min = min(Presión, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    sujeto = factor(sujeto),
+    dispositivo = factor(dispositivo)
+  )
+
+if ("L" %in% levels(pico_por_sujeto$dispositivo)) {
+  pico_por_sujeto <- pico_por_sujeto %>%
+    mutate(dispositivo = relevel(dispositivo, ref = "L"))
+}
+```
+
+```{r}
+
+
+m_pico <- lm(log(pico_abs) ~ dispositivo, data = pico_por_sujeto)
+emm_pico <- emmeans(m_pico, ~ dispositivo)
+
+tabla_pico_means <- as.data.frame(summary(emm_pico, type = "response", infer = TRUE)) %>%
+  transmute(
+    Dispositivo = dispositivo,
+    Pico_media_geom = response,
+    IC95_inf = lower.CL,
+    IC95_sup = upper.CL
+  )
+
+contr_pico <- contrast(emm_pico, method = "trt.vs.ctrl", ref = "L", adjust = "holm")
+tabla_pico_ratios <- as.data.frame(summary(contr_pico, type = "response", infer = TRUE)) %>%
+  transmute(
+    Comparación = contrast,
+    Ratio = ratio,
+    IC95_inf = lower.CL,
+    IC95_sup = upper.CL,
+    p_ajustada = p.value
+  )
+
+gt_pico_means <- tabla_pico_means %>%
+  gt() %>%
+  tab_header(
+    title = md("**Pico de presión (magnitud) por dispositivo (IC95%)**"),
+    subtitle = md("Grupos independientes; estimado con modelo lineal en log(pico_abs)")
+  ) %>%
+  cols_label(
+    Dispositivo = "Dispositivo",
+    Pico_media_geom = "Pico (media geométrica)",
+    IC95_inf = "IC95% inf",
+    IC95_sup = "IC95% sup"
+  ) %>%
+  fmt_number(columns = c(Pico_media_geom, IC95_inf, IC95_sup), decimals = 2) %>%
+  cols_align("center", everything()) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_options(
+    table.font.size = px(12),
+    data_row.padding = px(4),
+    heading.title.font.size = px(14),
+    heading.subtitle.font.size = px(12),
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    column_labels.border.bottom.color = "black"
+  ) %>%
+  opt_table_lines("all")
+
+gt_pico_ratios <- tabla_pico_ratios %>%
+  gt() %>%
+  tab_header(
+    title = md("**Ratios del pico vs L (IC95%)**"),
+    subtitle = md("L = 1.00; p-valores ajustados por Holm")
+  ) %>%
+  cols_label(
+    Comparación = "Comparación",
+    Ratio = "Ratio",
+    IC95_inf = "IC95% inf",
+    IC95_sup = "IC95% sup",
+    p_ajustada = "p (Holm)"
+  ) %>%
+  fmt_number(columns = c(Ratio, IC95_inf, IC95_sup), decimals = 2) %>%
+  fmt_number(columns = p_ajustada, decimals = 4) %>%
+  cols_align("center", everything()) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_options(
+    table.font.size = px(12),
+    data_row.padding = px(4),
+    heading.title.font.size = px(14),
+    heading.subtitle.font.size = px(12),
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    column_labels.border.bottom.color = "black"
+  ) %>%
+  opt_table_lines("all")
+```
+
+```{r}
+
+
+gt_pico_means
+```
+
+```{r}
+gt_pico_ratios
+```
+
+```{r}
+
+plot_pico_box <- ggplot(
+  pico_por_sujeto,
+  aes(x = dispositivo, y = -pico_abs, color = dispositivo)
+) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.7) +
+  scale_y_continuous(limits = c(NA, 0)) +
+  geom_jitter(width = 0.12, alpha = 0.65, size = 2) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 12),
+    axis.title.y = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Distribución del pico de presión por dispositivo",
+    subtitle = "Cada punto representa un sujeto (grupos independientes)",
+    x = NULL,
+    y = "Pico de presión (mmHg)"
+  )
+```
+
+```{r fig.width=7, fig.height=8}
+plot_pico_box
+
+```
+
+```{r}
+
+
+plot_pico_ratios <- ggplot(tabla_pico_ratios,
+                           aes(x = Ratio, y = Comparación)) +
+  geom_vline(xintercept = 1, linetype = "dashed", linewidth = 0.8) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = IC95_inf, xmax = IC95_sup),
+                 height = 0.2, linewidth = 0.8) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title.x = element_text(face = "bold"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Ratios del pico de presión vs L",
+    subtitle = "L = 1.00 (IC95%); línea discontinua = igualdad con L",
+    x = "Ratio vs L (IC95%)",
+    y = NULL
+  )
+```
+
+
+```{r fig.width=9, fig.height=4}
+plot_pico_ratios
+```
+
+```{r}
+
+
+plot_auc_box <- ggplot(
+  auc_modelo,
+  aes(x = dispositivo, y = AUC, color = dispositivo)
+) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.7) +
+  geom_jitter(width = 0.12, alpha = 0.65, size = 2) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title.y = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Distribución del área bajo la curva por dispositivo",
+    subtitle = "Cada punto representa un sujeto (grupos independientes)",
+    x = NULL,
+    y = "AUC (mmHg·s)"
+  )
+```
+
+
+```{r fig.width=6, fig.height=8}
+plot_auc_box
+```
+
+```{r}
+
+
+plot_curvas <- ggplot(datos_total, aes(x = Tiempo, y = Presión, group = sujeto, color = dispositivo)) +
+  geom_line(alpha = 0.35, linewidth = 0.7) +
+  facet_wrap(~ dispositivo, ncol = 1) +
+  scale_color_manual(values = colores_disp) +
+  guides(color = "none") +
+  theme_minimal(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold", size = 14),
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(1.2, "lines")
+  ) +
+  labs(
+    title = "Curvas individuales de presión por dispositivo",
+    subtitle = "Cada línea representa un sujeto independiente",
+    x = "Tiempo (s)",
+    y = "Presión (mmHg)"
+  )
+```
+
+
+```{r fig.width=12, fig.height=12}
+plot_curvas
+```
+
+```{r}
+
+
+datos_resumen <- datos_total %>%
+  group_by(dispositivo, Tiempo) %>%
+  summarise(
+    presion_mean = mean(Presión, na.rm = TRUE),
+    presion_sd   = sd(Presión, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+plot_media_sd <- ggplot(
+  datos_resumen,
+  aes(x = Tiempo, y = presion_mean, color = dispositivo)
+) +
+  geom_ribbon(
+    aes(
+      ymin = presion_mean - presion_sd,
+      ymax = presion_mean + presion_sd,
+      fill = dispositivo
+    ),
+    alpha = 0.18,
+    colour = NA
+  ) +
+  geom_line(linewidth = 1.3) +
+  scale_color_manual(values = colores_disp) +
+  scale_fill_manual(values = colores_disp) +
+  guides(fill = "none") +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Curva media de presión por dispositivo",
+    subtitle = "Línea = media; banda sombreada = ±1 SD (tiempo completo disponible)",
+    x = "Tiempo (s)",
+    y = "Presión (mmHg)",
+    color = "Dispositivo"
+  )
+```
+
+
+```{r fig.width=8, fig.height=5}
+plot_media_sd
+```
+```{r}
+Sys.setenv(
+  CHROMOTE_CHROME = "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+)
+```
+
+```{r}
+datos_alineados <- datos_total %>%
+  inner_join(
+    auc_por_sujeto %>% select(sujeto, dispositivo, t_inicio),
+    by = c("sujeto", "dispositivo")
+  ) %>%
+  mutate(
+    Tiempo_rel = Tiempo - t_inicio,
+    dispositivo = factor(dispositivo, levels = c("L", "D", "R"))
+  )
+
+plot_curvas_alineadas <- ggplot(
+  datos_alineados,
+  aes(x = Tiempo_rel, y = Presión, group = sujeto, color = dispositivo)
+) +
+  geom_line(alpha = 0.35, linewidth = 0.7) +
+  facet_wrap(~ dispositivo, ncol = 1) +
+  scale_color_manual(values = colores_disp) +
+  guides(color = "none") +
+  theme_minimal(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold", size = 14),
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(1.2, "lines")
+  ) +
+  labs(
+    title = "Curvas alineadas al inicio de la fase negativa",
+    subtitle = "Orden: L, D, R",
+    x = "Tiempo (s)",
+    y = "Presión (mmHg)"
+  )
+```
+
+```{r}
+tabla_pico_resumen_ventana <- tabla_pico_means %>%
+  left_join(
+    datos_total %>%
+      inner_join(
+        auc_por_sujeto %>% select(sujeto, dispositivo, t_inicio, t_fin),
+        by = c("sujeto", "dispositivo")
+      ) %>%
+      filter(Tiempo >= t_inicio, Tiempo <= t_fin) %>%
+      group_by(dispositivo) %>%
+      summarise(
+        Presion_min = min(Presión, na.rm = TRUE),
+        Presion_max = max(Presión, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      rename(Dispositivo = dispositivo),
+    by = "Dispositivo"
+  )
+```
+
+```{r}
+tabla_pico_resumen <- tabla_pico_means %>%
+  left_join(
+    datos_total %>%
+      group_by(dispositivo) %>%
+      summarise(
+        Presion_min = min(Presión, na.rm = TRUE),
+        Presion_max = max(Presión, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      rename(Dispositivo = dispositivo),
+    by = "Dispositivo"
+  ) %>%
+  mutate(
+    Dispositivo = factor(Dispositivo, levels = c("L", "D", "R"))
+  ) %>%
+  arrange(Dispositivo)
+```
+
+
+```{r}
+gt_pico_resumen <- tabla_pico_resumen %>%
+  gt() %>%
+  tab_header(
+    title = md("**Pico de presión y rango observado por dispositivo**"),
+    subtitle = md("Media geométrica del pico (IC95%) y valores mínimo/máximo de presión")
+  ) %>%
+  cols_label(
+    Dispositivo = "Dispositivo",
+    Pico_media_geom = "Pico media geométrica",
+    IC95_inf = "IC95% inf",
+    IC95_sup = "IC95% sup",
+    Presion_min = "Presión mínima",
+    Presion_max = "Presión máxima"
+  ) %>%
+  fmt_number(
+    columns = c(Pico_media_geom, IC95_inf, IC95_sup, Presion_min, Presion_max),
+    decimals = 2
+  ) %>%
+  cols_align("center", everything()) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_options(
+    table.font.size = px(12),
+    data_row.padding = px(4),
+    heading.title.font.size = px(14),
+    heading.subtitle.font.size = px(12),
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    column_labels.border.bottom.color = "black"
+  ) %>%
+  opt_table_lines("all")
+```
+
+
+```{r}
+
+dir.create("resultados_png", showWarnings = FALSE)
+
+library(gt)
+
+gtsave(
+  gt_means,
+  filename = "tabla_medias_geometricas_auc.png",
+  path = "resultados_png",
+  zoom = 2,
+  expand = 10
+)
+
+
+gtsave(
+  gt_ratios,
+  filename = "tabla_ratios_auc_vs_lifevac.png",
+  path = "resultados_png",
+  zoom = 2,
+  expand = 10
+)
+
+gtsave(
+  gt_pico_resumen,
+  filename = "tabla_pico_y_rango_presion.png",
+  path = "resultados_png",
+  zoom = 2,
+  expand = 10
+)
+
+gtsave(
+  gt_pico_means,
+  filename = "tabla_medias_geometricas_pico.png",
+  path = "resultados_png",
+  zoom = 2,
+  expand = 10
+)
+
+gtsave(
+  gt_pico_ratios,
+  filename = "tabla_ratios_pico_vs_lifevac.png",
+  path = "resultados_png",
+  zoom = 2,
+  expand = 10
+)
+
+
+ggsave(
+  filename = "grafico_boxplot_pico.png",
+  plot = plot_pico_box,
+  path = "resultados_png",
+  width = 7,
+  height = 8,
+  units = "in",
+  dpi = 300
+)
+
+ggsave(
+  filename = "grafico_ratios_pico.png",
+  plot = plot_pico_ratios,
+  path = "resultados_png",
+  width = 9,
+  height = 4,
+  units = "in",
+  dpi = 300
+)
+
+ggsave(
+  filename = "grafico_boxplot_auc.png",
+  plot = plot_auc_box,
+  path = "resultados_png",
+  width = 6,
+  height = 8,
+  units = "in",
+  dpi = 300
+)
+
+ggsave(
+  filename = "grafico_curvas_individuales.png",
+  plot = plot_curvas,
+  path = "resultados_png",
+  width = 12,
+  height = 12,
+  units = "in",
+  dpi = 300
+)
+
+ggsave(
+  filename = "grafico_media_sd.png",
+  plot = plot_media_sd,
+  path = "resultados_png",
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+```
+```{r}
+plot_auc_ratios <- ggplot(tabla_ratios %>% filter(Outcome == "AUC total (efecto total)"),
+                          aes(x = Ratio, y = Comparación)) +
+  geom_vline(xintercept = 1, linetype = "dashed", linewidth = 0.8) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = IC95_inf, xmax = IC95_sup),
+                 height = 0.2, linewidth = 0.8) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 12),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Ratios de AUC total vs LifeVac",
+    subtitle = "L = 1.00; IC95%",
+    x = "Ratio vs L",
+    y = NULL
+  )
+
+plot_aucnorm_ratios <- ggplot(tabla_ratios %>% filter(Outcome == "AUC/seg (intensidad media)"),
+                              aes(x = Ratio, y = Comparación)) +
+  geom_vline(xintercept = 1, linetype = "dashed", linewidth = 0.8) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = IC95_inf, xmax = IC95_sup),
+                 height = 0.2, linewidth = 0.8) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 12),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Ratios de AUC/seg vs L",
+    subtitle = "L = 1.00; IC95%",
+    x = "Ratio vs L",
+    y = NULL
+  )
+```
+
+```{r}
+ggplot(auc_modelo, aes(x = dispositivo, y = AUC, fill = dispositivo, color = dispositivo)) +
+  geom_violin(alpha = 0.25, trim = FALSE) +
+  geom_boxplot(width = 0.15, outlier.shape = NA, fill = "white") +
+  geom_jitter(width = 0.10, alpha = 0.7, size = 2) +
+  scale_fill_manual(values = colores_disp) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none") +
+  labs(
+    title = "Distribución de AUC por dispositivo",
+    x = NULL,
+    y = "AUC"
+  )
+```
+
+
+```{r}
+ggplot(tabla_means %>% filter(Outcome == "AUC total (efecto total)"),
+       aes(x = Dispositivo, y = Media, color = Dispositivo)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = IC95_inf, ymax = IC95_sup), width = 0.15, linewidth = 0.8) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Media geométrica de AUC por dispositivo",
+    y = "Media geométrica (IC95%)",
+    x = NULL
+  )
+```
+
+```{r}
+datos_alineados <- datos_total %>%
+  inner_join(auc_por_sujeto %>% select(sujeto, dispositivo, t_inicio),
+             by = c("sujeto", "dispositivo")) %>%
+  mutate(Tiempo_rel = Tiempo - t_inicio)
+```
+
+```{r}
+ggplot(auc_modelo, aes(x = duracion, fill = dispositivo, color = dispositivo)) +
+  geom_density(alpha = 0.2) +
+  scale_fill_manual(values = colores_disp) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Distribución de la duración de la fase negativa",
+    x = "Duración (s)",
+    y = "Densidad",
+    fill = "Dispositivo",
+    color = "Dispositivo"
+  )
+```
+
+```{r}
+datos_relacion <- auc_modelo %>%
+  left_join(pico_por_sujeto %>% select(sujeto, dispositivo, pico_abs),
+            by = c("sujeto", "dispositivo"))
+
+ggplot(datos_relacion, aes(x = pico_abs, y = AUC, color = dispositivo)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Relación entre pico de presión y AUC",
+    x = "Pico de presión (|Presión|)",
+    y = "AUC",
+    color = "Dispositivo"
+  )
+```
+
+```{r}
+ggplot(auc_modelo, aes(x = AUC, color = dispositivo)) +
+  stat_ecdf(linewidth = 1) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "ECDF de AUC por dispositivo",
+    x = "AUC",
+    y = "Proporción acumulada",
+    color = "Dispositivo"
+  )
+```
+
+```{r}
+
+dir.create("resultados_png", showWarnings = FALSE)
+
+Sys.setenv(
+  CHROMOTE_CHROME = "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+)
+
+library(chromote)
+library(gt)
+
+colores_disp <- c(
+  "L" = "darkgreen",
+  "D"    = "coral1",
+  "R" = "cornflowerblue"
+)
+
+gtsave(gt_means,       filename = "tabla_medias_geometricas_auc.png",  path = "resultados_png", zoom = 2, expand = 10)
+gtsave(gt_ratios,      filename = "tabla_ratios_auc_vs_lifevac.png",   path = "resultados_png", zoom = 2, expand = 10)
+gtsave(gt_pico_means,  filename = "tabla_medias_geometricas_pico.png", path = "resultados_png", zoom = 2, expand = 10)
+gtsave(gt_pico_ratios, filename = "tabla_ratios_pico_vs_lifevac.png",  path = "resultados_png", zoom = 2, expand = 10)
+
+
+ggsave("grafico_boxplot_pico.png",        plot = plot_pico_box,    path = "resultados_png", width = 7, height = 8,  units = "in", dpi = 300)
+ggsave("grafico_ratios_pico.png",         plot = plot_pico_ratios, path = "resultados_png", width = 9, height = 4,  units = "in", dpi = 300)
+ggsave("grafico_boxplot_auc.png",         plot = plot_auc_box,     path = "resultados_png", width = 6, height = 8,  units = "in", dpi = 300)
+ggsave("grafico_curvas_individuales.png", plot = plot_curvas,      path = "resultados_png", width = 12, height = 12, units = "in", dpi = 300)
+ggsave("grafico_media_sd.png",            plot = plot_media_sd,    path = "resultados_png", width = 8, height = 5,  units = "in", dpi = 300)
+
+
+plot_auc_ratios <- ggplot(
+  tabla_ratios %>% filter(Outcome == "AUC total (efecto total)"),
+  aes(x = Ratio, y = Comparación)
+) +
+  geom_vline(xintercept = 1, linetype = "dashed", linewidth = 0.8) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = IC95_inf, xmax = IC95_sup),
+                 height = 0.2, linewidth = 0.8) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 12),
+    axis.title.x = element_text(face = "bold"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Ratios de AUC total vs L",
+    subtitle = "LifeVac = 1.00; IC95%",
+    x = "Ratio vs LifeVac",
+    y = NULL
+  )
+
+plot_aucnorm_ratios <- ggplot(
+  tabla_ratios %>% filter(Outcome == "AUC/seg (intensidad media)"),
+  aes(x = Ratio, y = Comparación)
+) +
+  geom_vline(xintercept = 1, linetype = "dashed", linewidth = 0.8) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = IC95_inf, xmax = IC95_sup),
+                 height = 0.2, linewidth = 0.8) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 12),
+    axis.title.x = element_text(face = "bold"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Ratios de AUC/seg vs L",
+    subtitle = "L = 1.00; IC95%",
+    x = "Ratio vs L",
+    y = NULL
+  )
+
+ggsave("grafico_ratios_auc_total.png",    plot = plot_auc_ratios,     path = "resultados_png", width = 9, height = 4, units = "in", dpi = 300)
+ggsave("grafico_ratios_auc_norm.png",     plot = plot_aucnorm_ratios, path = "resultados_png", width = 9, height = 4, units = "in", dpi = 300)
+
+
+plot_violin_auc <- ggplot(
+  auc_modelo,
+  aes(x = dispositivo, y = AUC, fill = dispositivo, color = dispositivo)
+) +
+  geom_violin(alpha = 0.25, trim = FALSE) +
+  geom_boxplot(width = 0.15, outlier.shape = NA, fill = "white") +
+  geom_jitter(width = 0.10, alpha = 0.7, size = 2) +
+  scale_fill_manual(values = colores_disp) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Distribución de AUC por dispositivo",
+    subtitle = "Violín + boxplot + puntos individuales",
+    x = NULL,
+    y = "AUC"
+  )
+
+plot_violin_aucnorm <- ggplot(
+  auc_modelo,
+  aes(x = dispositivo, y = AUC_norm, fill = dispositivo, color = dispositivo)
+) +
+  geom_violin(alpha = 0.25, trim = FALSE) +
+  geom_boxplot(width = 0.15, outlier.shape = NA, fill = "white") +
+  geom_jitter(width = 0.10, alpha = 0.7, size = 2) +
+  scale_fill_manual(values = colores_disp) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Distribución de AUC/seg por dispositivo",
+    subtitle = "Violín + boxplot + puntos individuales",
+    x = NULL,
+    y = "AUC/seg"
+  )
+
+plot_violin_pico <- ggplot(
+  pico_por_sujeto,
+  aes(x = dispositivo, y = pico_abs, fill = dispositivo, color = dispositivo)
+) +
+  geom_violin(alpha = 0.25, trim = FALSE) +
+  geom_boxplot(width = 0.15, outlier.shape = NA, fill = "white") +
+  geom_jitter(width = 0.10, alpha = 0.7, size = 2) +
+  scale_fill_manual(values = colores_disp) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Distribución del pico de presión por dispositivo",
+    subtitle = "Violín + boxplot + puntos individuales",
+    x = NULL,
+    y = "Pico de presión (|Presión|)"
+  )
+
+ggsave("grafico_violin_auc.png",          plot = plot_violin_auc,     path = "resultados_png", width = 7, height = 8, units = "in", dpi = 300)
+ggsave("grafico_violin_auc_norm.png",     plot = plot_violin_aucnorm, path = "resultados_png", width = 7, height = 8, units = "in", dpi = 300)
+ggsave("grafico_violin_pico.png",         plot = plot_violin_pico,    path = "resultados_png", width = 7, height = 8, units = "in", dpi = 300)
+
+
+plot_means_auc <- ggplot(
+  tabla_means %>% filter(Outcome == "AUC total (efecto total)"),
+  aes(x = Dispositivo, y = Media, color = Dispositivo)
+) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = IC95_inf, ymax = IC95_sup), width = 0.15, linewidth = 0.8) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Media geométrica de AUC por dispositivo",
+    subtitle = "Estimación puntual e IC95%",
+    x = NULL,
+    y = "Media geométrica (IC95%)"
+  )
+
+plot_means_aucnorm <- ggplot(
+  tabla_means %>% filter(Outcome == "AUC/seg (intensidad media)"),
+  aes(x = Dispositivo, y = Media, color = Dispositivo)
+) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = IC95_inf, ymax = IC95_sup), width = 0.15, linewidth = 0.8) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Media geométrica de AUC/seg por dispositivo",
+    subtitle = "Estimación puntual e IC95%",
+    x = NULL,
+    y = "Media geométrica (IC95%)"
+  )
+
+plot_means_pico <- ggplot(
+  tabla_pico_means,
+  aes(x = Dispositivo, y = Pico_media_geom, color = Dispositivo)
+) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = IC95_inf, ymax = IC95_sup), width = 0.15, linewidth = 0.8) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Media geométrica del pico por dispositivo",
+    subtitle = "Estimación puntual e IC95%",
+    x = NULL,
+    y = "Media geométrica (IC95%)"
+  )
+
+ggsave("grafico_medias_auc.png",          plot = plot_means_auc,     path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+ggsave("grafico_medias_auc_norm.png",     plot = plot_means_aucnorm, path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+ggsave("grafico_medias_pico.png",         plot = plot_means_pico,    path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+
+
+datos_alineados <- datos_total %>%
+  inner_join(
+    auc_por_sujeto %>% select(sujeto, dispositivo, t_inicio),
+    by = c("sujeto", "dispositivo")
+  ) %>%
+  mutate(Tiempo_rel = Tiempo - t_inicio)
+
+plot_curvas_alineadas <- ggplot(
+  datos_alineados,
+  aes(x = Tiempo_rel, y = Presión, group = sujeto, color = dispositivo)
+) +
+  geom_line(alpha = 0.35, linewidth = 0.7) +
+  facet_wrap(~ dispositivo, ncol = 1) +
+  scale_color_manual(values = colores_disp) +
+  guides(color = "none") +
+  theme_minimal(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold", size = 14),
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(1.2, "lines")
+  ) +
+  labs(
+    title = "Curvas alineadas al inicio de la fase negativa",
+    subtitle = "Tiempo relativo: t = 0 en el inicio de la presión negativa",
+    x = "Tiempo relativo (s)",
+    y = "Presión (mmHg)"
+  )
+
+ggsave("grafico_curvas_alineadas.png", plot = plot_curvas_alineadas, path = "resultados_png", width = 12, height = 12, units = "in", dpi = 300)
+
+
+plot_densidad_duracion <- ggplot(
+  auc_modelo,
+  aes(x = duracion, fill = dispositivo, color = dispositivo)
+) +
+  geom_density(alpha = 0.20, linewidth = 1) +
+  scale_fill_manual(values = colores_disp) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Distribución de la duración de la fase negativa",
+    subtitle = "Comparación entre dispositivos",
+    x = "Duración (s)",
+    y = "Densidad",
+    fill = "Dispositivo",
+    color = "Dispositivo"
+  )
+
+ggsave("grafico_densidad_duracion.png", plot = plot_densidad_duracion, path = "resultados_png", width = 8, height = 5, units = "in", dpi = 300)
+
+
+datos_relacion <- auc_modelo %>%
+  left_join(
+    pico_por_sujeto %>% select(sujeto, dispositivo, pico_abs),
+    by = c("sujeto", "dispositivo")
+  )
+
+plot_pico_vs_auc <- ggplot(
+  datos_relacion,
+  aes(x = pico_abs, y = AUC, color = dispositivo)
+) +
+  geom_point(size = 2.8, alpha = 0.80) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Relación entre pico de presión y AUC",
+    subtitle = "Cada punto representa un sujeto",
+    x = "Pico de presión (|Presión|)",
+    y = "AUC",
+    color = "Dispositivo"
+  )
+
+plot_pico_vs_aucnorm <- ggplot(
+  datos_relacion,
+  aes(x = pico_abs, y = AUC_norm, color = dispositivo)
+) +
+  geom_point(size = 2.8, alpha = 0.80) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Relación entre pico de presión y AUC/seg",
+    subtitle = "Cada punto representa un sujeto",
+    x = "Pico de presión (|Presión|)",
+    y = "AUC/seg",
+    color = "Dispositivo"
+  )
+
+ggsave("grafico_pico_vs_auc.png",      plot = plot_pico_vs_auc,     path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+ggsave("grafico_pico_vs_auc_norm.png", plot = plot_pico_vs_aucnorm, path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+
+
+plot_ecdf_auc <- ggplot(
+  auc_modelo,
+  aes(x = AUC, color = dispositivo)
+) +
+  stat_ecdf(linewidth = 1) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "ECDF de AUC por dispositivo",
+    x = "AUC",
+    y = "Proporción acumulada",
+    color = "Dispositivo"
+  )
+
+plot_ecdf_aucnorm <- ggplot(
+  auc_modelo,
+  aes(x = AUC_norm, color = dispositivo)
+) +
+  stat_ecdf(linewidth = 1) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "ECDF de AUC/seg por dispositivo",
+    x = "AUC/seg",
+    y = "Proporción acumulada",
+    color = "Dispositivo"
+  )
+
+plot_ecdf_pico <- ggplot(
+  pico_por_sujeto,
+  aes(x = pico_abs, color = dispositivo)
+) +
+  stat_ecdf(linewidth = 1) +
+  scale_color_manual(values = colores_disp) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "ECDF del pico de presión por dispositivo",
+    x = "Pico de presión (|Presión|)",
+    y = "Proporción acumulada",
+    color = "Dispositivo"
+  )
+
+ggsave("grafico_ecdf_auc.png",          plot = plot_ecdf_auc,     path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+ggsave("grafico_ecdf_auc_norm.png",     plot = plot_ecdf_aucnorm, path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+ggsave("grafico_ecdf_pico.png",         plot = plot_ecdf_pico,    path = "resultados_png", width = 7, height = 5, units = "in", dpi = 300)
+
+
+```
+
